@@ -1,0 +1,88 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: auth-service
+    url: http://auth-service:8001
+    routes:
+      - name: auth-routes
+        paths:
+          - /api/v1/auth
+        strip_path: false
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-Type
+            - Authorization
+          exposed_headers:
+            - X-Auth-Token
+          credentials: true
+          max_age: 3600
+
+  - name: ticket-service
+    url: http://ticket-service:8002
+    routes:
+      - name: ticket-routes
+        paths:
+          - /api/v1/tickets
+        strip_path: false
+    plugins:
+      - name: jwt
+      - name: rate-limiting
+        config:
+          minute: 60
+          hour: 1000
+
+  - name: client-service
+    url: http://client-service:8003
+    routes:
+      - name: client-routes
+        paths:
+          - /api/v1/clients
+        strip_path: false
+    plugins:
+      - name: jwt
+      - name: rate-limiting
+        config:
+          minute: 60
+          hour: 1000
+
+  - name: notification-service
+    url: http://notification-service:8004
+    routes:
+      - name: notification-routes
+        paths:
+          - /api/v1/notifications
+        strip_path: false
+    plugins:
+      - name: jwt
+
+  - name: email-service
+    url: http://email-service:8005
+    routes:
+      - name: email-routes
+        paths:
+          - /api/v1/emails
+        strip_path: false
+    plugins:
+      - name: jwt
+
+plugins:
+  - name: prometheus
+  - name: request-transformer
+    config:
+      add:
+        headers:
+          - "X-Forwarded-Prefix:/api/v1"
