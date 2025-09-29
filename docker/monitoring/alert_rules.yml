@@ -1,0 +1,164 @@
+# Alert Rules for AidlY Services
+
+groups:
+  - name: aidly.rules
+    rules:
+      # Kong API Gateway Alerts
+      - alert: KongDown
+        expr: up{job="kong"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kong API Gateway is down"
+          description: "Kong API Gateway has been down for more than 1 minute."
+
+      - alert: KongHighLatency
+        expr: histogram_quantile(0.95, rate(kong_latency_bucket[5m])) > 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kong high latency detected"
+          description: "Kong 95th percentile latency is {{ $value }}ms for more than 2 minutes."
+
+      - alert: KongHighErrorRate
+        expr: rate(kong_http_status{code=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kong high error rate"
+          description: "Kong is returning HTTP 5xx errors at a rate of {{ $value }} requests/second."
+
+      # Database Alerts
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database has been down for more than 1 minute."
+
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL high connection usage"
+          description: "PostgreSQL connection usage is {{ $value }}% for more than 5 minutes."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache has been down for more than 1 minute."
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value }}% for more than 5 minutes."
+
+      # System Resource Alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }} for more than 5 minutes."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }} for more than 5 minutes."
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space is running low"
+          description: "Disk space is only {{ $value }}% available on {{ $labels.instance }}:{{ $labels.mountpoint }}."
+
+      # Service-specific Alerts (for when microservices are implemented)
+      - alert: AuthServiceDown
+        expr: up{job="auth-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Auth Service is down"
+          description: "Authentication service has been unreachable for more than 2 minutes."
+
+      - alert: TicketServiceDown
+        expr: up{job="ticket-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ticket Service is down"
+          description: "Ticket management service has been unreachable for more than 2 minutes."
+
+      - alert: HighRequestRate
+        expr: sum(rate(kong_http_status[5m])) by (service) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request rate detected"
+          description: "Service {{ $labels.service }} is receiving {{ $value }} requests/second for more than 5 minutes."
+
+      - alert: RateLimitExceeded
+        expr: increase(kong_http_status{code="429"}[5m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limit frequently exceeded"
+          description: "Rate limit has been exceeded {{ $value }} times in the last 5 minutes."
+
+  - name: business.rules
+    rules:
+      # Business Logic Alerts (examples for future implementation)
+      - alert: HighTicketVolume
+        expr: increase(aidly_tickets_created_total[1h]) > 100
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High ticket creation volume"
+          description: "{{ $value }} tickets created in the last hour, consider scaling support team."
+
+      - alert: LongResponseTime
+        expr: avg(aidly_ticket_first_response_time_minutes) > 60
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average first response time is high"
+          description: "Average first response time is {{ $value }} minutes, exceeding SLA target."
+
+      - alert: UnassignedTickets
+        expr: aidly_tickets_unassigned_total > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many unassigned tickets"
+          description: "{{ $value }} tickets are currently unassigned."

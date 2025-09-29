@@ -1,0 +1,205 @@
+version: '3.8'
+
+# Monitoring and Service Discovery for AidlY
+# This extends the main docker-compose.yml with monitoring services
+
+services:
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aidly-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - aidly-network
+    depends_on:
+      - kong
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Grafana - Monitoring dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aidly-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin_password_2024}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - aidly-network
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Alertmanager - Alert management
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: aidly-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/config.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - aidly-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Node Exporter - System metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: aidly-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - aidly-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9100/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Redis Exporter - Redis metrics
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: aidly-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_secret_2024}
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    networks:
+      - aidly-network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9121/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Postgres Exporter - PostgreSQL metrics
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: aidly-postgres-exporter
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://aidly_user:${DB_PASSWORD:-aidly_secret_2024}@postgres:5432/aidly?sslmode=disable
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    networks:
+      - aidly-network
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9187/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Jaeger - Distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: aidly-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_COLLECTOR_PORT:-14268}:14268"
+      - "${JAEGER_OTLP_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+    volumes:
+      - jaeger-data:/tmp
+    networks:
+      - aidly-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Service Discovery Health Check
+  service-health-checker:
+    image: alpine:latest
+    container_name: aidly-health-checker
+    restart: unless-stopped
+    command: |
+      sh -c "
+        apk add --no-cache curl jq &&
+        while true; do
+          echo 'Running health checks...'
+          curl -f http://kong:8001/status || echo 'Kong unhealthy'
+          curl -f http://prometheus:9090/-/healthy || echo 'Prometheus unhealthy'
+          curl -f http://grafana:3000/api/health || echo 'Grafana unhealthy'
+          sleep 30
+        done
+      "
+    networks:
+      - aidly-network
+    depends_on:
+      - kong
+      - prometheus
+      - grafana
+
+volumes:
+  prometheus-data:
+    driver: local
+    name: aidly-prometheus-data
+  grafana-data:
+    driver: local
+    name: aidly-grafana-data
+  alertmanager-data:
+    driver: local
+    name: aidly-alertmanager-data
+  jaeger-data:
+    driver: local
+    name: aidly-jaeger-data
+
+networks:
+  aidly-network:
+    external: true

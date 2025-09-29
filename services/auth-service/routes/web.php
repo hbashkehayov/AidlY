@@ -26,7 +26,7 @@ $router->get('/health', function () {
     return response()->json([
         'status' => 'healthy',
         'service' => 'auth-service',
-        'timestamp' => now()->toIso8601String()
+        'timestamp' => \Illuminate\Support\Carbon::now()->toIso8601String()
     ]);
 });
 
@@ -77,8 +77,8 @@ $router->group(['prefix' => 'api/v1/permissions', 'middleware' => ['jwt', 'role:
 // Session management
 $router->group(['prefix' => 'api/v1/sessions', 'middleware' => 'jwt'], function () use ($router) {
     $router->get('/', 'SessionController@index');
-    $router->delete('/{id}', 'SessionController@destroy');
     $router->delete('/all', 'SessionController@destroyAll');
+    $router->delete('/{id}', 'SessionController@destroy');
 });
 
 // Two-factor authentication

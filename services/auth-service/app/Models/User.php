@@ -8,6 +8,7 @@ use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Laravel\Lumen\Auth\Authorizable;
+use Illuminate\Support\Carbon;
 
 class User extends Model implements AuthenticatableContract, AuthorizableContract
 {
@@ -177,7 +178,7 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
      */
     public function updateLastLogin($ip = null)
     {
-        $this->last_login_at = now();
+        $this->last_login_at = Carbon::now();
         $this->last_login_ip = $ip;
         $this->login_attempts = 0;
         $this->save();
@@ -194,7 +195,7 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
 
         // Lock account after 5 failed attempts for 30 minutes
         if ($this->login_attempts >= 5) {
-            $this->locked_until = now()->addMinutes(30);
+            $this->locked_until = Carbon::now()->addMinutes(30);
         }
 
         $this->save();
@@ -211,7 +212,7 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
             return false;
         }
 
-        if (now()->gt($this->locked_until)) {
+        if (Carbon::now()->gt($this->locked_until)) {
             $this->locked_until = null;
             $this->login_attempts = 0;
             $this->save();

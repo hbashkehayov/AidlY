@@ -1,4 +1,4 @@
-version: '3.8'
+# Docker Compose configuration for AidlY platform
 
 services:
   # PostgreSQL Database
@@ -107,7 +107,7 @@ services:
       retries: 5
 
   kong-migration:
-    image: kong:3.4-alpine
+    image: kong:latest
     container_name: aidly-kong-migration
     command: kong migrations bootstrap
     depends_on:
@@ -124,7 +124,7 @@ services:
     restart: on-failure
 
   kong:
-    image: kong:3.4-alpine
+    image: kong:latest
     container_name: aidly-kong
     restart: unless-stopped
     depends_on:
@@ -143,7 +143,6 @@ services:
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
-      KONG_DECLARATIVE_CONFIG: /opt/kong/kong.yml
     ports:
       - "${KONG_PROXY_PORT:-8000}:8000"     # Proxy port
       - "${KONG_PROXY_SSL_PORT:-8443}:8443" # Proxy SSL port
@@ -158,6 +157,419 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+
+  # Email Service (Lumen with IMAP/SMTP)
+  email-service:
+    build:
+      context: ./services/email-service
+      dockerfile: Dockerfile
+    container_name: aidly-email-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Email-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8005
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      TICKET_SERVICE_URL: http://ticket-service:8002
+      CLIENT_SERVICE_URL: http://client-service:8003
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-aidly_minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secret_2024}
+      MINIO_BUCKET: aidly-attachments
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./services/email-service:/var/www/html
+      - ./services/email-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Auth Service (Lumen with JWT authentication)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: aidly-auth-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Auth-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8001
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      JWT_SECRET: ${JWT_SECRET:-your-jwt-secret-key-here-change-in-production}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/auth-service:/var/www/html
+      - ./services/auth-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Client Service (Lumen for client management)
+  client-service:
+    build:
+      context: ./services/client-service
+      dockerfile: Dockerfile
+    container_name: aidly-client-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Client-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8003
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      AUTH_SERVICE_URL: http://auth-service:8001
+      TICKET_SERVICE_URL: http://ticket-service:8002
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./services/client-service:/var/www/html
+      - ./services/client-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Ticket Service (Lumen for ticket management)
+  ticket-service:
+    build:
+      context: ./services/ticket-service
+      dockerfile: Dockerfile
+    container_name: aidly-ticket-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Ticket-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8002
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      AUTH_SERVICE_URL: http://auth-service:8001
+      CLIENT_SERVICE_URL: http://client-service:8003
+      EMAIL_SERVICE_URL: http://email-service:8005
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/ticket-service:/var/www/html
+      - ./services/ticket-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Notification Service (Multi-channel notifications)
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: aidly-notification-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Notification-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8004
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      # Email settings
+      MAIL_MAILER: smtp
+      MAIL_HOST: ${MAIL_HOST:-smtp.mailtrap.io}
+      MAIL_PORT: ${MAIL_PORT:-2525}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_ENCRYPTION: tls
+      # Slack settings
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      SLACK_CHANNEL: ${SLACK_CHANNEL:-#support}
+      # SMS settings
+      SMS_PROVIDER: ${SMS_PROVIDER:-twilio}
+      TWILIO_SID: ${TWILIO_SID}
+      TWILIO_TOKEN: ${TWILIO_TOKEN}
+      TWILIO_FROM: ${TWILIO_FROM}
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./services/notification-service:/var/www/html
+      - ./services/notification-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # AI Integration Service (Webhook-ready AI processing)
+  ai-integration-service:
+    build:
+      context: ./services/ai-integration-service
+      dockerfile: Dockerfile
+    container_name: aidly-ai-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-AI-Integration-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8006
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      # AI Provider Settings
+      AI_DEFAULT_PROVIDER: ${AI_DEFAULT_PROVIDER:-openai}
+      OPENAI_ENABLED: ${OPENAI_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_ENABLED: ${ANTHROPIC_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GEMINI_ENABLED: ${GEMINI_ENABLED:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Webhook Settings
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET:-your-webhook-secret}
+      # Feature Flags
+      AI_FEATURE_AUTO_CATEGORIZATION: ${AI_FEATURE_AUTO_CATEGORIZATION:-false}
+      AI_FEATURE_AUTO_PRIORITIZATION: ${AI_FEATURE_AUTO_PRIORITIZATION:-false}
+      AI_FEATURE_RESPONSE_SUGGESTIONS: ${AI_FEATURE_RESPONSE_SUGGESTIONS:-false}
+      AI_FEATURE_SENTIMENT_ANALYSIS: ${AI_FEATURE_SENTIMENT_ANALYSIS:-false}
+    ports:
+      - "8006:8006"
+    volumes:
+      - ./services/ai-integration-service:/var/www/html
+      - ./services/ai-integration-service/storage/logs:/var/www/html/storage/logs
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Analytics Service (Advanced reporting and analytics)
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: aidly-analytics-service
+    restart: unless-stopped
+    environment:
+      APP_NAME: AidlY-Analytics-Service
+      APP_ENV: development
+      APP_DEBUG: true
+      APP_URL: http://localhost:8007
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: aidly
+      DB_USERNAME: aidly_user
+      DB_PASSWORD: ${DB_PASSWORD:-aidly_secret_2024}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_2024}
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-aidly_admin}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq_secret_2024}
+      RABBITMQ_VHOST: aidly
+      # Service URLs for cross-service communication
+      AUTH_SERVICE_URL: http://auth-service:8001
+      TICKET_SERVICE_URL: http://ticket-service:8002
+      CLIENT_SERVICE_URL: http://client-service:8003
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
+      EMAIL_SERVICE_URL: http://email-service:8005
+      # Analytics specific settings
+      ANALYTICS_CACHE_TTL: 300
+      ANALYTICS_AGGREGATION_SCHEDULE: "0 */6 * * *"
+      ANALYTICS_EXPORT_PATH: /var/www/html/storage/exports
+      ANALYTICS_MAX_EXPORT_RECORDS: 10000
+      # Report scheduling
+      REPORT_SCHEDULE_ENABLED: true
+      REPORT_RETENTION_DAYS: 90
+      # Performance settings
+      ANALYTICS_QUERY_TIMEOUT: 30
+      ANALYTICS_BATCH_SIZE: 1000
+    ports:
+      - "8007:8007"
+    volumes:
+      - ./services/analytics-service:/var/www/html
+      - ./services/analytics-service/storage/logs:/var/www/html/storage/logs
+      - analytics-exports:/var/www/html/storage/exports
+    networks:
+      - aidly-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Nginx (Alternative to Kong - commented out by default)
   # nginx:
@@ -215,6 +627,9 @@ volumes:
   kong-db-data:
     driver: local
     name: aidly-kong-db-data
+  analytics-exports:
+    driver: local
+    name: aidly-analytics-exports
   # elasticsearch-data:
   #   driver: local
   #   name: aidly-elasticsearch-data

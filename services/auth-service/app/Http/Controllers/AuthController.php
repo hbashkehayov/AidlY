@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Carbon;
 
 class AuthController extends Controller
 {
@@ -302,7 +303,7 @@ class AuthController extends Controller
         DB::table('password_resets')->insert([
             'email' => $user->email,
             'token' => Hash::make($token),
-            'created_at' => now()
+            'created_at' => Carbon::now()
         ]);
 
         // TODO: Send email with reset link
@@ -350,7 +351,7 @@ class AuthController extends Controller
         }
 
         // Check if token is expired (1 hour)
-        if (now()->diffInMinutes($passwordReset->created_at) > 60) {
+        if (Carbon::now()->diffInMinutes($passwordReset->created_at) > 60) {
             return response()->json([
                 'success' => false,
                 'message' => 'Password reset token has expired'

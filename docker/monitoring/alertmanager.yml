@@ -1,0 +1,67 @@
+# Alertmanager configuration for AidlY
+
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@aidly.local'
+  smtp_auth_username: 'alerts@aidly.local'
+  smtp_auth_password: 'alert_password'
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: web.hook
+  routes:
+    - match:
+        severity: critical
+      receiver: critical-alerts
+      repeat_interval: 5m
+    - match:
+        severity: warning
+      receiver: warning-alerts
+      repeat_interval: 15m
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+
+  - name: 'critical-alerts'
+    slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#alerts-critical'
+        title: 'AidlY Critical Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        send_resolved: true
+    email_configs:
+      - to: 'admin@aidly.local'
+        from: 'alerts@aidly.local'
+        subject: 'AidlY Critical Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Labels:
+          {{ range .Labels.SortedPairs }}  - {{ .Name }} = {{ .Value }}
+          {{ end }}
+          {{ end }}
+
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#alerts-warning'
+        title: 'AidlY Warning Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        send_resolved: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']

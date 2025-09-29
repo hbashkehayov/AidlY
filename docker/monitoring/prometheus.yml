@@ -1,0 +1,115 @@
+# Prometheus configuration for AidlY monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'aidly-local'
+    environment: 'development'
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Kong API Gateway
+  - job_name: 'kong'
+    static_configs:
+      - targets: ['kong:8001']
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Node Exporter (System metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # PostgreSQL metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # AidlY Auth Service (when implemented)
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service:8001']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # AidlY Ticket Service (when implemented)
+  - job_name: 'ticket-service'
+    static_configs:
+      - targets: ['ticket-service:8002']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # AidlY Client Service (when implemented)
+  - job_name: 'client-service'
+    static_configs:
+      - targets: ['client-service:8003']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # AidlY Notification Service (when implemented)
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:8004']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # AidlY Email Service (when implemented)
+  - job_name: 'email-service'
+    static_configs:
+      - targets: ['email-service:8005']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # RabbitMQ (if management plugin is enabled)
+  - job_name: 'rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15692']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # MinIO metrics
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: /minio/v2/metrics/cluster
+    scrape_interval: 30s
+    scrape_timeout: 10s
