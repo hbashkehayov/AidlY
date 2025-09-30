@@ -311,6 +311,13 @@ export const api = {
 
     // Exports
     exports: {
+      reports: async (format: 'excel' | 'pdf', params?: any) => {
+        const response = await analyticsApi.post('/exports/reports',
+          { format, ...params },
+          { responseType: 'blob' }
+        );
+        return response;
+      },
       tickets: (params: any) =>
         analyticsApi.post('/exports/tickets', params),
       agents: (params: any) =>

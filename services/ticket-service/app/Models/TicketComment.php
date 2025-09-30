@@ -24,7 +24,15 @@ class TicketComment extends Model
         'attachments',
         'is_read',
         'read_at',
-        'read_by'
+        'read_by',
+        // Email metadata for Gmail-style rendering
+        'from_address',
+        'to_addresses',
+        'cc_addresses',
+        'subject',
+        'body_html',
+        'body_plain',
+        'headers',
     ];
 
     protected $casts = [
@@ -38,6 +46,10 @@ class TicketComment extends Model
         'is_read' => 'boolean',
         'read_at' => 'datetime',
         'attachments' => 'array',
+        // Email metadata casts
+        'to_addresses' => 'array',
+        'cc_addresses' => 'array',
+        'headers' => 'array',
     ];
 
     /**

@@ -1,0 +1,393 @@
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>AidlY Analytics Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                h1 { color: #333; border-bottom: 3px solid #4F46E5; padding-bottom: 10px; }
+                h2 { color: #4F46E5; margin-top: 30px; }
+                .meta { color: #666; margin-bottom: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th { background: #4F46E5; color: white; padding: 12px; text-align: left; }
+                td { padding: 10px; border-bottom: 1px solid #ddd; }
+                tr:hover { background: #f5f5f5; }
+                .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
+                .stat-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #4F46E5; }
+                .stat-label { color: #666; font-size: 14px; }
+                .stat-value { font-size: 28px; font-weight: bold; color: #333; margin-top: 5px; }
+            </style>
+        </head>
+        <body>
+            <h1>AidlY Analytics Report</h1>
+            <div class="meta">
+                <p><strong>Generated:</strong> September 30, 2025 11:46:06</p>
+                <p><strong>Period:</strong> 2025-08-31 to 2025-09-30</p>
+            </div>
+
+            <h2>Summary Statistics</h2>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Total Tickets</div>
+                    <div class="stat-value">43</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Resolved Tickets</div>
+                    <div class="stat-value">3</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Clients</div>
+                    <div class="stat-value">29</div>
+                </div>
+            </div>
+
+            <h2>Status Distribution</h2>
+            <table>
+                <tr>
+                    <th>Status</th>
+                    <th>Count</th>
+                </tr>
+                <tr>
+                    <td>New</td>
+                    <td>30</td>
+                </tr>
+                <tr>
+                    <td>Open</td>
+                    <td>6</td>
+                </tr>
+                <tr>
+                    <td>Pending</td>
+                    <td>3</td>
+                </tr>
+                <tr>
+                    <td>Resolved</td>
+                    <td>3</td>
+                </tr>
+                <tr>
+                    <td>Closed</td>
+                    <td>1</td>
+                </tr>
+            </table>
+
+            <h2>Recent Tickets</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ticket #</th>
+                        <th>Subject</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                                        <tr>
+                        <td>TKT-003</td>
+                        <td>Feature request: Dark mode</td>
+                        <td>new</td>
+                        <td>low</td>
+                        <td>Sep 24, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-004</td>
+                        <td>Application crash on export</td>
+                        <td>open</td>
+                        <td>urgent</td>
+                        <td>Sep 24, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001003</td>
+                        <td>Request for dark mode feature</td>
+                        <td>new</td>
+                        <td>low</td>
+                        <td>Sep 24, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001008</td>
+                        <td>Feature request: API rate limiting</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 24, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001009</td>
+                        <td>Security concern: unauthorized access</td>
+                        <td>open</td>
+                        <td>urgent</td>
+                        <td>Sep 25, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-002</td>
+                        <td>Invoice not received</td>
+                        <td>pending</td>
+                        <td>medium</td>
+                        <td>Sep 23, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001023</td>
+                        <td>Need help with login</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001002</td>
+                        <td>Payment processing failed</td>
+                        <td>pending</td>
+                        <td>urgent</td>
+                        <td>Sep 25, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001007</td>
+                        <td>Invoice not generated</td>
+                        <td>pending</td>
+                        <td>medium</td>
+                        <td>Sep 25, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-005</td>
+                        <td>How to integrate API?</td>
+                        <td>resolved</td>
+                        <td>medium</td>
+                        <td>Sep 17, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001004</td>
+                        <td>Application crashes on mobile</td>
+                        <td>resolved</td>
+                        <td>medium</td>
+                        <td>Sep 23, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001010</td>
+                        <td>Account upgrade request</td>
+                        <td>resolved</td>
+                        <td>low</td>
+                        <td>Sep 24, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001005</td>
+                        <td>How to export data to CSV</td>
+                        <td>closed</td>
+                        <td>low</td>
+                        <td>Sep 22, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001012</td>
+                        <td>Issue with login to AidlY dashboard</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001013</td>
+                        <td>Feature request: Dark mode for dashboard</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001014</td>
+                        <td>How to export ticket data?</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001022</td>
+                        <td>Billing question</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001024</td>
+                        <td>Issue with AidlY Platform - Cannot access dashboard</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001025</td>
+                        <td>Your account is live – next, add your business info</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001026</td>
+                        <td>Check your Google Account privacy settings</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001027</td>
+                        <td>🚀 Your GitHub launch code</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001028</td>
+                        <td>How to ship with Laravel Cloud</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001029</td>
+                        <td>🎉 Добре дошли в Inverso.bg!</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001030</td>
+                        <td>Your Oracle Account - Verify Your Email Address</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001031</td>
+                        <td>Как да започнете с Inverso.bg</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001032</td>
+                        <td>Hristiyan, review your Google Account settings</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001033</td>
+                        <td>Start setting up your Stripe account</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001036</td>
+                        <td>Stay Connected to Postman</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001037</td>
+                        <td>Hristiyan, review your Google Account settings</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001038</td>
+                        <td>Multi-factor authentication device added for ngrok.com</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001039</td>
+                        <td>Security alert</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001040</td>
+                        <td>You’re in—meet Claude, your new AI assistant</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001041</td>
+                        <td>Laravel Cloud March Product Update</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001042</td>
+                        <td>Complete your account application to get started</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001044</td>
+                        <td>Slack account sign in from a new device</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001045</td>
+                        <td>asdadasdas</td>
+                        <td>open</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001043</td>
+                        <td>Security alert</td>
+                        <td>open</td>
+                        <td>high</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001046</td>
+                        <td>You have an invitation</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001047</td>
+                        <td>Security alert</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001048</td>
+                        <td>SharedMailbox Test - Email Integration Issue</td>
+                        <td>open</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001049</td>
+                        <td>Gmail SharedMailbox Test - Demo for Hristiyan</td>
+                        <td>open</td>
+                        <td>medium</td>
+                        <td>Sep 29, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001050</td>
+                        <td>Daily test</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 30, 2025</td>
+                    </tr>
+                                        <tr>
+                        <td>TKT-001051</td>
+                        <td>final test</td>
+                        <td>new</td>
+                        <td>medium</td>
+                        <td>Sep 30, 2025</td>
+                    </tr>
+                                    </tbody>
+            </table>
+
+            <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
+                <p>© 2025 AidlY Support Platform - Confidential Report</p>
+            </div>
+        </body>
+        </html>
+        

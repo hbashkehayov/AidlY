@@ -205,6 +205,14 @@ class Ticket extends Model
     }
 
     /**
+     * Get the assigned agent
+     */
+    public function assignedAgent(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_agent_id');
+    }
+
+    /**
      * Scopes
      */
     public function scopeActive($query)

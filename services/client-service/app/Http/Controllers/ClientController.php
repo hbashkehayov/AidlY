@@ -63,9 +63,15 @@ class ClientController extends Controller
         $perPage = min($request->get('limit', 20), 100);
         $clients = $query->paginate($perPage);
 
+        // Add ticket counts for each client
+        $clientsWithTickets = $this->enrichClientsWithTicketCounts($clients->items());
+
+        // Get total ticket count across ALL customers (not just current page)
+        $overallTicketCount = $this->getTotalTicketCount();
+
         return response()->json([
             'success' => true,
-            'data' => $clients->items(),
+            'data' => $clientsWithTickets,
             'meta' => [
                 'current_page' => $clients->currentPage(),
                 'per_page' => $clients->perPage(),
@@ -73,8 +79,166 @@ class ClientController extends Controller
                 'last_page' => $clients->lastPage(),
                 'from' => $clients->firstItem(),
                 'to' => $clients->lastItem(),
+                'total_tickets_overall' => $overallTicketCount,
             ]
         ]);
+    }
+
+    /**
+     * Get total ticket count across all clients
+     */
+    protected function getTotalTicketCount(): int
+    {
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch total ticket count from ticket service
+            $response = \Illuminate\Support\Facades\Http::timeout(5)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets/stats/total");
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data'])) {
+                    return $responseData['data']['total'] ?? 0;
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch total ticket count', [
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Enrich clients with ticket counts from ticket service
+     */
+    protected function enrichClientsWithTicketCounts(array $clients): array
+    {
+        if (empty($clients)) {
+            return $clients;
+        }
+
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch ticket counts for all clients
+            $clientIds = array_column($clients, 'id');
+
+            \Illuminate\Support\Facades\Log::info('Fetching ticket stats', [
+                'url' => "{$ticketServiceUrl}/api/v1/public/tickets/stats/by-clients",
+                'client_ids' => $clientIds
+            ]);
+
+            $response = \Illuminate\Support\Facades\Http::timeout(5)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets/stats/by-clients", [
+                    'client_ids' => implode(',', $clientIds)
+                ]);
+
+            \Illuminate\Support\Facades\Log::info('Ticket stats response', [
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'body' => $response->body()
+            ]);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+
+                \Illuminate\Support\Facades\Log::info('Response data structure', [
+                    'keys' => array_keys($responseData),
+                    'success' => $responseData['success'] ?? 'not set',
+                    'data_type' => gettype($responseData['data'] ?? null)
+                ]);
+
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data'])) {
+                    $ticketStats = $responseData['data'];
+
+                    // Map ticket counts to clients
+                    foreach ($clients as &$client) {
+                        $stats = $ticketStats[$client['id']] ?? null;
+
+                        if ($stats) {
+                            $client['total_tickets'] = $stats['total'] ?? 0;
+                            $client['new_tickets'] = $stats['new'] ?? 0;
+                            $client['open_tickets'] = $stats['open'] ?? 0;
+                            $client['pending_tickets'] = $stats['pending'] ?? 0;
+                            $client['on_hold_tickets'] = $stats['on_hold'] ?? 0;
+                            $client['resolved_tickets'] = $stats['resolved'] ?? 0;
+                            $client['closed_tickets'] = $stats['closed'] ?? 0;
+                            $client['cancelled_tickets'] = $stats['cancelled'] ?? 0;
+                            $client['active_tickets'] = $stats['active'] ?? 0;
+                            $client['inactive_tickets'] = $stats['inactive'] ?? 0;
+                        } else {
+                            $client['total_tickets'] = 0;
+                            $client['new_tickets'] = 0;
+                            $client['open_tickets'] = 0;
+                            $client['pending_tickets'] = 0;
+                            $client['on_hold_tickets'] = 0;
+                            $client['resolved_tickets'] = 0;
+                            $client['closed_tickets'] = 0;
+                            $client['cancelled_tickets'] = 0;
+                            $client['active_tickets'] = 0;
+                            $client['inactive_tickets'] = 0;
+                        }
+                    }
+                } else {
+                    \Illuminate\Support\Facades\Log::warning('Invalid response format from ticket service');
+                    // Set counts to 0
+                    foreach ($clients as &$client) {
+                        $client['total_tickets'] = 0;
+                        $client['new_tickets'] = 0;
+                        $client['open_tickets'] = 0;
+                        $client['pending_tickets'] = 0;
+                        $client['on_hold_tickets'] = 0;
+                        $client['resolved_tickets'] = 0;
+                        $client['closed_tickets'] = 0;
+                        $client['cancelled_tickets'] = 0;
+                        $client['active_tickets'] = 0;
+                        $client['inactive_tickets'] = 0;
+                    }
+                }
+            } else {
+                \Illuminate\Support\Facades\Log::warning('Ticket service request failed', [
+                    'status' => $response->status()
+                ]);
+                // If ticket service is unavailable, set counts to 0
+                foreach ($clients as &$client) {
+                    $client['total_tickets'] = 0;
+                    $client['new_tickets'] = 0;
+                    $client['open_tickets'] = 0;
+                    $client['pending_tickets'] = 0;
+                    $client['on_hold_tickets'] = 0;
+                    $client['resolved_tickets'] = 0;
+                    $client['closed_tickets'] = 0;
+                    $client['cancelled_tickets'] = 0;
+                    $client['active_tickets'] = 0;
+                    $client['inactive_tickets'] = 0;
+                }
+            }
+        } catch (\Exception $e) {
+            // On error, set counts to 0
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch ticket counts', [
+                'error' => $e->getMessage()
+            ]);
+
+            foreach ($clients as &$client) {
+                $client['total_tickets'] = 0;
+                $client['new_tickets'] = 0;
+                $client['open_tickets'] = 0;
+                $client['pending_tickets'] = 0;
+                $client['on_hold_tickets'] = 0;
+                $client['resolved_tickets'] = 0;
+                $client['closed_tickets'] = 0;
+                $client['cancelled_tickets'] = 0;
+                $client['active_tickets'] = 0;
+                $client['inactive_tickets'] = 0;
+            }
+        }
+
+        return $clients;
     }
 
     /**
@@ -215,7 +379,7 @@ class ClientController extends Controller
     }
 
     /**
-     * Soft delete a client
+     * Delete a client and all related data
      */
     public function destroy(string $id): JsonResponse
     {
@@ -231,12 +395,100 @@ class ClientController extends Controller
             ], 404);
         }
 
-        $client->softDelete();
+        try {
+            // IMPORTANT: Delete tickets FIRST before starting transaction
+            // This is because tickets are in a different service/database
+            // and may have foreign key constraints referencing the client
+            $ticketDeletionResult = $this->deleteClientTickets($id);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Client deleted successfully'
-        ]);
+            if (!$ticketDeletionResult) {
+                return response()->json([
+                    'success' => false,
+                    'error' => [
+                        'code' => 'TICKET_DELETE_FAILED',
+                        'message' => 'Failed to delete client tickets. Client deletion aborted.'
+                    ]
+                ], 500);
+            }
+
+            \Illuminate\Support\Facades\DB::beginTransaction();
+
+            // 1. Delete client notes (CASCADE will handle this, but explicit for clarity)
+            ClientNote::where('client_id', $id)->delete();
+
+            // 2. Delete client merge records
+            ClientMerge::where('primary_client_id', $id)
+                ->orWhere('merged_client_id', $id)
+                ->delete();
+
+            // 3. Hard delete the client from database
+            $client->delete();
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            \Illuminate\Support\Facades\Log::info('Client deleted successfully', [
+                'client_id' => $id,
+                'email' => $client->email
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Client and all related data deleted successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+
+            \Illuminate\Support\Facades\Log::error('Failed to delete client', [
+                'client_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'DELETE_FAILED',
+                    'message' => 'Failed to delete client: ' . $e->getMessage()
+                ]
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete all tickets for a client from ticket service
+     * Returns true on success, false on failure
+     */
+    protected function deleteClientTickets(string $clientId): bool
+    {
+        try {
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Call ticket service to delete all tickets for this client
+            $response = \Illuminate\Support\Facades\Http::timeout(30)
+                ->delete("{$ticketServiceUrl}/api/v1/public/clients/{$clientId}/tickets");
+
+            if ($response->successful()) {
+                $data = $response->json();
+                \Illuminate\Support\Facades\Log::info('Client tickets deleted', [
+                    'client_id' => $clientId,
+                    'deleted_count' => $data['deleted_count'] ?? 0
+                ]);
+                return true;
+            } else {
+                \Illuminate\Support\Facades\Log::error('Failed to delete client tickets', [
+                    'client_id' => $clientId,
+                    'status' => $response->status(),
+                    'body' => $response->body()
+                ]);
+                return false;
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error deleting client tickets', [
+                'client_id' => $clientId,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
     }
 
     /**

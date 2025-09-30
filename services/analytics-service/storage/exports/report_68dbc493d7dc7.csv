@@ -1,0 +1,96 @@
+﻿═════════════════════════════════════════════════════════════════════
+"AidlY Analytics Report - Comprehensive Dashboard Export"
+═════════════════════════════════════════════════════════════════════
+Generated:,"September 30, 2025 11:52:51"
+"Report Period:","All time to Present"
+"Total Records:",43
+
+"═══ KEY METRICS ═══"
+
+Metric,Count,Percentage
+─────────────────,─────────,────────────
+"Total Tickets",43,100%
+"New Tickets",30,69.8%
+"Open Tickets",6,14%
+"Pending Tickets",3,7%
+"Resolved Tickets",3,7%
+"Closed Tickets",1,2.3%
+
+"═══ PRIORITY DISTRIBUTION ═══"
+
+"Priority Level",Count,Percentage
+─────────────────,─────────,────────────
+"🔴 Urgent",3,7%
+"🟠 High",1,2.3%
+"🟡 Medium",35,81.4%
+"🔵 Low",4,9.3%
+
+"═══ TEAM STATISTICS ═══"
+
+Metric,Value
+─────────────────,─────────
+"Total Clients",29
+"Total Agents",6
+"Resolution Rate",9.3%
+
+"═══ STATUS BY PRIORITY BREAKDOWN ═══"
+
+Status,Urgent,High,Medium,Low,Total
+─────────────,─────,─────,─────,─────,─────
+New,0,0,28,2,30
+Open,2,1,3,0,6
+Pending,1,0,2,0,3
+Resolved,0,0,2,1,3
+Closed,0,0,0,1,1
+
+"═══ DETAILED TICKET HISTORY ═══"
+
+"Ticket #",Subject,Status,Priority,"Client Name","Client Email","Assigned Agent",Source,"Created Date","Updated Date","Resolution Time (days)"
+─────────,─────────────────,─────────,─────────,─────────────,──────────────,─────────────,─────────,─────────────,─────────────,──────────────────
+TKT-003,"Feature request: Dark mode",NEW,LOW,"Bob Wilson",bob.wilson@example.com,Unassigned,email,"Sep 24, 2025 09:47","Sep 29, 2025 11:52",N/A
+TKT-004,"Application crash on export",OPEN,URGENT,"Alice Brown",alice.brown@example.com,"Bob Agent",phone,"Sep 24, 2025 07:47","Sep 26, 2025 08:57",N/A
+TKT-001003,"Request for dark mode feature",NEW,LOW,"Bob Wilson",bob.wilson@company3.com,Unassigned,web_form,"Sep 24, 2025 07:50","Sep 26, 2025 08:57",N/A
+TKT-001008,"Feature request: API rate limiting",NEW,MEDIUM,"Bob Wilson",bob.wilson@company3.com,Unassigned,email,"Sep 24, 2025 23:50","Sep 26, 2025 08:57",N/A
+TKT-001009,"Security concern: unauthorized access",OPEN,URGENT,"Sarah Johnson",sarah.johnson@company4.com,"Test User",phone,"Sep 25, 2025 07:05","Sep 26, 2025 08:57",N/A
+TKT-002,"Invoice not received",PENDING,MEDIUM,"Jane Smith",jane.smith@example.com,"Charlie Agent",web_form,"Sep 23, 2025 12:47","Sep 26, 2025 08:57",N/A
+TKT-001023,"Need help with login",NEW,MEDIUM,Customer,customer@example.com,Unassigned,email,"Sep 29, 2025 08:01","Sep 29, 2025 08:01",N/A
+TKT-001002,"Payment processing failed",PENDING,URGENT,"Alice Smith",alice.smith@company2.com,"Test User",email,"Sep 25, 2025 07:20","Sep 26, 2025 08:57",N/A
+TKT-001007,"Invoice not generated",PENDING,MEDIUM,"Alice Smith",alice.smith@company2.com,Unassigned,web_form,"Sep 25, 2025 01:50","Sep 26, 2025 08:57",N/A
+TKT-005,"How to integrate API?",RESOLVED,MEDIUM,"Charlie Davis",charlie.davis@example.com,"Alice Agent",chat,"Sep 17, 2025 12:47","Sep 26, 2025 08:57","7d 0h"
+TKT-001004,"Application crashes on mobile",RESOLVED,MEDIUM,"Sarah Johnson",sarah.johnson@company4.com,"Test User",phone,"Sep 23, 2025 07:50","Sep 26, 2025 08:57","1d 20h"
+TKT-001010,"Account upgrade request",RESOLVED,LOW,"Mike Chen",mike.chen@company5.com,"Test User",web_form,"Sep 24, 2025 07:50","Sep 26, 2025 08:57","0d 18h"
+TKT-001005,"How to export data to CSV",CLOSED,LOW,"Mike Chen",mike.chen@company5.com,"Test User",email,"Sep 22, 2025 07:50","Sep 26, 2025 08:57",N/A
+TKT-001012,"Issue with login to AidlY dashboard",NEW,MEDIUM,"Hristiyan Bashkehayov",hristiyan.bashkehayov@gmail.com,Unassigned,email,"Sep 29, 2025 06:15","Sep 29, 2025 07:15",N/A
+TKT-001013,"Feature request: Dark mode for dashboard",NEW,MEDIUM,"Hristiyan Bashkehayov",hristiyan.bashkehayov@gmail.com,Unassigned,email,"Sep 29, 2025 05:15","Sep 29, 2025 07:15",N/A
+TKT-001014,"How to export ticket data?",NEW,MEDIUM,"Hristiyan Bashkehayov",hristiyan.bashkehayov@gmail.com,Unassigned,email,"Sep 29, 2025 04:15","Sep 29, 2025 07:15",N/A
+TKT-001022,"Billing question",NEW,MEDIUM,User,user@test.com,Unassigned,email,"Sep 29, 2025 08:01","Sep 29, 2025 08:01",N/A
+TKT-001024,"Issue with AidlY Platform - Cannot access dashboar...",NEW,MEDIUM,"Hristiyan Bashkehayov",hristiyan.bashkehayov@gmail.com,Unassigned,email,"Sep 29, 2025 08:01","Sep 29, 2025 08:01",N/A
+TKT-001025,"Your account is live – next, add your business inf...",NEW,MEDIUM,"Googlecommunityteam Noreply",googlecommunityteam-noreply@google.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001026,"Check your Google Account privacy settings",NEW,MEDIUM,"No Reply",no-reply@accounts.google.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001027,"🚀 Your GitHub launch code",NEW,MEDIUM,Noreply,noreply@github.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001028,"How to ship with Laravel Cloud",NEW,MEDIUM,Ship,ship@info.laravel.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001029,"🎉 Добре дошли в Inverso.bg!",NEW,MEDIUM,Info,info@inverso.bg,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001030,"Your Oracle Account - Verify Your Email Address",NEW,MEDIUM,"Oracle Acct Ww",oracle-acct_ww@oracle.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001031,"Как да започнете с Inverso.bg",NEW,MEDIUM,Info,info@inverso.bg,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001032,"Hristiyan, review your Google Account settings",NEW,MEDIUM,"No Reply",no-reply@google.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001033,"Start setting up your Stripe account",NEW,MEDIUM,Notifications,notifications@stripe.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001036,"Stay Connected to Postman",NEW,MEDIUM,Marketing,marketing@postman.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001037,"Hristiyan, review your Google Account settings",NEW,MEDIUM,"No Reply",no-reply@google.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001038,"Multi-factor authentication device added for ngrok...",NEW,MEDIUM,Contact,contact@ngrok.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001039,"Security alert",NEW,MEDIUM,"No Reply",no-reply@accounts.google.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001040,"You’re in—meet Claude, your new AI assistant",NEW,MEDIUM,Team,team@email.anthropic.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001041,"Laravel Cloud March Product Update",NEW,MEDIUM,Ship,ship@info.laravel.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001042,"Complete your account application to get started",NEW,MEDIUM,Notifications,notifications@stripe.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001044,"Slack account sign in from a new device",NEW,MEDIUM,Feedback,feedback@slack.com,Unassigned,email,"Sep 29, 2025 08:40","Sep 29, 2025 08:40",N/A
+TKT-001045,asdadasdas,OPEN,MEDIUM,"H Bashkehayov",h.bashkehayov@softart.bg,"Test User",email,"Sep 29, 2025 08:40","Sep 29, 2025 11:55",N/A
+TKT-001043,"Security alert",OPEN,HIGH,"No Reply",no-reply@accounts.google.com,"Alice Agent",email,"Sep 29, 2025 08:40","Sep 29, 2025 11:48",N/A
+TKT-001046,"You have an invitation",NEW,MEDIUM,Invitations,invitations@linkedin.com,Unassigned,email,"Sep 29, 2025 12:49","Sep 29, 2025 12:49",N/A
+TKT-001047,"Security alert",NEW,MEDIUM,"No Reply",no-reply@accounts.google.com,Unassigned,email,"Sep 29, 2025 12:49","Sep 29, 2025 12:49",N/A
+TKT-001048,"SharedMailbox Test - Email Integration Issue",OPEN,MEDIUM,"Test Customer",testcustomer@example.com,"Alice Johnson",email,"Sep 29, 2025 13:50","Sep 29, 2025 13:50",N/A
+TKT-001049,"Gmail SharedMailbox Test - Demo for Hristiyan",OPEN,MEDIUM,"Hristiyan Bashkehayov",hristiyan.bashkehayov@gmail.com,"Alice Johnson",email,"Sep 29, 2025 14:00","Sep 29, 2025 14:00",N/A
+TKT-001050,"Daily test",NEW,MEDIUM,"H Bashkehayov",h.bashkehayov@softart.bg,Unassigned,email,"Sep 30, 2025 06:35","Sep 30, 2025 06:35",N/A
+TKT-001051,"final test",NEW,MEDIUM,"H Bashkehayov",h.bashkehayov@softart.bg,Unassigned,email,"Sep 30, 2025 06:50","Sep 30, 2025 06:50",N/A
+
+═════════════════════════════════════════════════════════════════════
+"End of Report - © 2025 AidlY Support Platform"
+═════════════════════════════════════════════════════════════════════

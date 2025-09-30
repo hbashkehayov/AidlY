@@ -120,3 +120,86 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Email content styling */
+.email-content {
+  @apply text-gray-700;
+}
+
+.email-content img {
+  @apply max-w-full h-auto;
+  display: inline-block;
+  /* Allow images to load from data URIs and external sources */
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.email-content p {
+  @apply my-2;
+}
+
+.email-content a {
+  @apply text-blue-600 hover:underline;
+}
+
+.email-content table {
+  @apply border-collapse w-full my-2;
+}
+
+.email-content table td,
+.email-content table th {
+  @apply border border-gray-300 px-2 py-1;
+}
+
+.email-content blockquote {
+  @apply border-l-4 border-gray-300 pl-4 italic my-2;
+}
+
+.email-content pre {
+  @apply bg-gray-100 p-3 rounded my-2 overflow-x-auto;
+}
+
+.email-content code {
+  @apply bg-gray-100 px-1 py-0.5 rounded text-sm;
+}
+
+.email-content ul,
+.email-content ol {
+  @apply ml-6 my-2;
+}
+
+.email-content li {
+  @apply my-1;
+}
+
+.email-content h1,
+.email-content h2,
+.email-content h3,
+.email-content h4,
+.email-content h5,
+.email-content h6 {
+  @apply font-semibold mt-4 mb-2;
+}
+
+.email-content h1 {
+  @apply text-2xl;
+}
+
+.email-content h2 {
+  @apply text-xl;
+}
+
+.email-content h3 {
+  @apply text-lg;
+}
+
+/* Handle email signatures */
+.email-content .gmail_signature,
+.email-content .signature {
+  @apply text-gray-500 text-sm mt-4 pt-2 border-t border-gray-200;
+}
+
+/* Quote handling for email threads */
+.email-content .gmail_quote {
+  @apply border-l-4 border-gray-300 pl-4 text-gray-600 my-2;
+}

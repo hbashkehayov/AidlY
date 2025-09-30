@@ -52,9 +52,12 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
     // Email accounts management
     $router->group(['prefix' => 'accounts'], function () use ($router) {
         $router->get('/', 'EmailAccountController@index');
+        $router->get('/agents', 'EmailAccountController@agentAccounts');
         $router->get('/{id}', 'EmailAccountController@show');
         $router->post('/', 'EmailAccountController@store');
         $router->put('/{id}', 'EmailAccountController@update');
+        $router->put('/user/{userId}', 'EmailAccountController@updateByUser');
+        $router->put('/user/{userId}/disable', 'EmailAccountController@disableByUser');
         $router->delete('/{id}', 'EmailAccountController@destroy');
 
         // Account testing and operations

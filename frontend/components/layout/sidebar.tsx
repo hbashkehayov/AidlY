@@ -10,13 +10,12 @@ import {
   Settings,
   HelpCircle,
   BarChart3,
-  MessageSquare,
-  Mail,
   Menu,
   Search,
   Bell,
   User,
   LogOut,
+  Handshake,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -36,7 +35,7 @@ import { useSidebar } from '@/lib/sidebar-context';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useNotificationCounts } from '@/hooks/use-notifications';
 
-const getNavigation = (notificationCounts: any) => [
+const getNavigation = (notificationCounts: any, userRole?: string) => [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   {
     name: 'Tickets',
@@ -46,13 +45,12 @@ const getNavigation = (notificationCounts: any) => [
   },
   { name: 'Customers', href: '/customers', icon: Users },
   {
-    name: 'Messages',
-    href: '/messages',
-    icon: MessageSquare,
-    badge: notificationCounts?.unread_messages > 0 ? notificationCounts.unread_messages : undefined
+    name: 'Team',
+    href: '/team',
+    icon: Handshake,
+    badge: undefined
   },
-  { name: 'Reports', href: '/reports', icon: BarChart3 },
-  { name: 'Knowledge Base', href: '/knowledge', icon: HelpCircle },
+  ...(userRole === 'admin' ? [{ name: 'Reports', href: '/reports', icon: BarChart3 }] : []),
 ];
 
 const bottomNavigation = [
@@ -66,7 +64,7 @@ export function Sidebar() {
   const { isCollapsed, toggle } = useSidebar();
   const { data: notificationCounts } = useNotificationCounts();
 
-  const navigation = getNavigation(notificationCounts);
+  const navigation = getNavigation(notificationCounts, user?.role);
 
   return (
     <>
@@ -143,7 +141,7 @@ export function Sidebar() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                  <Link href="/settings/profile">
+                  <Link href="/profile">
                     <User className="mr-2 h-4 w-4" />
                     Profile
                   </Link>

@@ -9,11 +9,11 @@ use Illuminate\Support\Facades\Log;
 
 class TicketReplyEmailService
 {
-    protected $smtpService;
+    protected $sharedMailboxSmtpService;
 
-    public function __construct(SmtpService $smtpService)
+    public function __construct(SharedMailboxSmtpService $sharedMailboxSmtpService)
     {
-        $this->smtpService = $smtpService;
+        $this->sharedMailboxSmtpService = $sharedMailboxSmtpService;
     }
 
     /**
@@ -21,37 +21,31 @@ class TicketReplyEmailService
      */
     public function sendReplyEmail(array $ticketData, array $commentData, array $clientData): array
     {
-        // Find the email account that originally received this ticket
-        $emailAccount = $this->findEmailAccountForTicket($ticketData);
-
-        if (!$emailAccount) {
-            throw new \Exception('No email account configured for sending replies');
-        }
-
         // Get user info for the person who replied
         $userInfo = $this->getUserInfo($commentData['user_id']);
 
-        // Prepare email content
-        $subject = $this->buildReplySubject($ticketData['subject'], $ticketData['ticket_number'] ?? null);
-        $emailContent = $this->buildReplyEmailContent($commentData, $ticketData, $userInfo, $clientData);
-
-        // Prepare email data
-        $emailData = [
-            'to' => [$clientData['email']],
-            'subject' => $subject,
-            'body_html' => $emailContent['html'],
-            'body_plain' => $emailContent['plain'],
-            'headers' => $this->buildReplyHeaders($ticketData),
+        // Prepare reply data for SharedMailboxSmtpService
+        $replyData = [
+            'ticket_id' => $ticketData['id'],
+            'ticket_number' => $ticketData['ticket_number'] ?? null,
+            'subject' => $ticketData['subject'],
+            'content' => $commentData['content'],
+            'agent' => [
+                'name' => $userInfo['name'] ?? 'Support Agent',
+                'email' => $userInfo['email'] ?? null,
+                'department' => $userInfo['department'] ?? 'Customer Support',
+            ],
+            'recipient' => [
+                'email' => $clientData['email'],
+                'name' => $clientData['name'] ?? null,
+            ],
+            'mailbox_address' => $this->getPreferredMailboxForTicket($ticketData),
+            'original_message_id' => $ticketData['metadata']['email_message_id'] ?? null,
+            'original_recipient' => $ticketData['metadata']['original_recipient'] ?? null,
         ];
 
-        // Add CC to original sender if different
-        if (!empty($ticketData['original_sender_email']) &&
-            $ticketData['original_sender_email'] !== $clientData['email']) {
-            $emailData['cc'] = [$ticketData['original_sender_email']];
-        }
-
-        // Send email
-        $result = $this->smtpService->sendEmail($emailAccount, $emailData);
+        // Send email through shared mailbox service
+        $result = $this->sharedMailboxSmtpService->sendTicketReply($replyData);
 
         // Log the sent email
         $this->logSentEmail($ticketData, $commentData, $clientData, $result);
@@ -64,24 +58,25 @@ class TicketReplyEmailService
      */
     public function sendStatusChangeEmail(array $ticketData, array $clientData): array
     {
-        $emailAccount = $this->findEmailAccountForTicket($ticketData);
-
-        if (!$emailAccount) {
-            throw new \Exception('No email account configured for sending status updates');
-        }
-
         $subject = $this->buildStatusChangeSubject($ticketData);
         $emailContent = $this->buildStatusChangeEmailContent($ticketData, $clientData);
 
-        $emailData = [
-            'to' => [$clientData['email']],
+        // Prepare notification data for SharedMailboxSmtpService
+        $notificationData = [
+            'type' => 'status_change',
             'subject' => $subject,
-            'body_html' => $emailContent['html'],
-            'body_plain' => $emailContent['plain'],
-            'headers' => $this->buildReplyHeaders($ticketData),
+            'content' => $emailContent['html'],
+            'recipients' => [
+                [
+                    'email' => $clientData['email'],
+                    'name' => $clientData['name'] ?? null,
+                ]
+            ],
+            'mailbox_address' => $this->getPreferredMailboxForTicket($ticketData),
         ];
 
-        $result = $this->smtpService->sendEmail($emailAccount, $emailData);
+        // Send through shared mailbox notification system
+        $result = $this->sharedMailboxSmtpService->sendNotification($notificationData);
 
         Log::info('Status change email sent', [
             'ticket_id' => $ticketData['id'],
@@ -93,15 +88,20 @@ class TicketReplyEmailService
     }
 
     /**
-     * Find the appropriate email account for sending replies
+     * Get preferred mailbox address for sending replies
      */
-    protected function findEmailAccountForTicket(array $ticketData): ?EmailAccount
+    protected function getPreferredMailboxForTicket(array $ticketData): ?string
     {
+        // Try to use original recipient address from metadata
+        if (!empty($ticketData['metadata']['original_recipient'])) {
+            return $ticketData['metadata']['original_recipient'];
+        }
+
         // Try to find by original email account if stored in metadata
         if (!empty($ticketData['metadata']['email_account_id'])) {
             $account = EmailAccount::find($ticketData['metadata']['email_account_id']);
-            if ($account && $account->is_active) {
-                return $account;
+            if ($account && $account->is_active && $account->isSharedMailbox()) {
+                return $account->email_address;
             }
         }
 
@@ -109,16 +109,24 @@ class TicketReplyEmailService
         if (!empty($ticketData['assigned_department_id'])) {
             $account = EmailAccount::where('department_id', $ticketData['assigned_department_id'])
                 ->where('is_active', true)
+                ->where('account_type', 'shared_mailbox')
                 ->first();
             if ($account) {
-                return $account;
+                return $account->email_address;
             }
         }
 
-        // Fallback to default active account
-        return EmailAccount::where('is_active', true)
-            ->orderBy('created_at')
+        // Fallback to support@softart.bg specifically (as configured in your setup)
+        $supportAccount = EmailAccount::sharedMailboxes()
+            ->where('email_address', 'support@softart.bg')
             ->first();
+        if ($supportAccount) {
+            return $supportAccount->email_address;
+        }
+
+        // Final fallback to any shared mailbox
+        $defaultSharedMailbox = EmailAccount::sharedMailboxes()->first();
+        return $defaultSharedMailbox ? $defaultSharedMailbox->email_address : null;
     }
 
     /**

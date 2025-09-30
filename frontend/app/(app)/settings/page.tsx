@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import {
   User,
   Mail,
@@ -19,12 +21,13 @@ import {
   Globe,
   Key,
   Building,
-  CreditCard,
+  Users,
   HelpCircle,
   Moon,
   Sun,
   Monitor,
-  Check,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   Select,
@@ -36,7 +39,103 @@ import {
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+
+  // User creation form state
+  const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    role: 'agent',
+    enableEmailIntegration: false,
+    gmailAddress: '',
+    gmailAppPassword: '',
+    agentSignature: ''
+  });
+
+  const handleInputChange = (field: string, value: string | boolean) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleCreateUser = async () => {
+    if (!formData.name || !formData.email || !formData.password) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+
+    if (formData.enableEmailIntegration && (!formData.gmailAddress || !formData.gmailAppPassword)) {
+      toast.error('Gmail address and app password are required for email integration');
+      return;
+    }
+
+    setIsLoading(true);
+
+    // Debug: Check token availability
+    if (!token) {
+      toast.error('Authentication token not found. Please log in again.');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          password_confirmation: formData.confirmPassword,
+          role: formData.role,
+          enable_email_integration: formData.enableEmailIntegration,
+          gmail_address: formData.gmailAddress,
+          gmail_app_password: formData.gmailAppPassword,
+          agent_signature: formData.agentSignature || `Best regards,\n${formData.name}\nAidlY Support Team`
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success('User created successfully!');
+        // Reset form
+        setFormData({
+          name: '',
+          email: '',
+          password: '',
+          confirmPassword: '',
+          role: 'agent',
+          enableEmailIntegration: false,
+          gmailAddress: '',
+          gmailAppPassword: '',
+          agentSignature: ''
+        });
+      } else {
+        // More specific error handling
+        if (data.message === 'Invalid or expired token') {
+          toast.error('Your session has expired. Please log in again.');
+        } else {
+          toast.error(data.message || 'Failed to create user');
+        }
+      }
+    } catch (error) {
+      console.error('User creation error:', error);
+      toast.error('Network error. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
@@ -54,7 +153,9 @@ export default function SettingsPage() {
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="appearance">Appearance</TabsTrigger>
-          <TabsTrigger value="billing">Billing</TabsTrigger>
+          {user?.role === 'admin' && (
+            <TabsTrigger value="users">User Management</TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
@@ -343,73 +444,172 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="billing" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Subscription Plan</CardTitle>
-              <CardDescription>
-                You are currently on the Professional plan
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg border p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-lg font-medium">Professional Plan</p>
-                    <p className="text-sm text-muted-foreground">$99/month</p>
+        {user?.role === 'admin' && (
+          <TabsContent value="users" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Create New User
+                </CardTitle>
+                <CardDescription>
+                  Add a new agent or supervisor to the platform with optional email integration
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Full Name *</Label>
+                    <Input
+                      id="name"
+                      placeholder="John Doe"
+                      value={formData.name}
+                      onChange={(e) => handleInputChange('name', e.target.value)}
+                    />
                   </div>
-                  <Badge>Active</Badge>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email Address *</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="john@company.com"
+                      value={formData.email}
+                      onChange={(e) => handleInputChange('email', e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="mt-4 space-y-2">
-                  <div className="flex items-center text-sm">
-                    <Check className="mr-2 h-4 w-4 text-green-500" />
-                    Unlimited tickets
-                  </div>
-                  <div className="flex items-center text-sm">
-                    <Check className="mr-2 h-4 w-4 text-green-500" />
-                    10 team members
-                  </div>
-                  <div className="flex items-center text-sm">
-                    <Check className="mr-2 h-4 w-4 text-green-500" />
-                    Advanced analytics
-                  </div>
-                  <div className="flex items-center text-sm">
-                    <Check className="mr-2 h-4 w-4 text-green-500" />
-                    Priority support
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline">Change Plan</Button>
-                <Button variant="outline">View Billing History</Button>
-              </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Payment Method</CardTitle>
-              <CardDescription>
-                Manage your payment methods
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between rounded-lg border p-4">
-                <div className="flex items-center gap-4">
-                  <CreditCard className="h-8 w-8" />
-                  <div>
-                    <p className="font-medium">•••• •••• •••• 4242</p>
-                    <p className="text-sm text-muted-foreground">Expires 12/24</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password *</Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Enter password"
+                        value={formData.password}
+                        onChange={(e) => handleInputChange('password', e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword">Confirm Password *</Label>
+                    <Input
+                      id="confirmPassword"
+                      type="password"
+                      placeholder="Confirm password"
+                      value={formData.confirmPassword}
+                      onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
+                    />
                   </div>
                 </div>
-                <Badge variant="outline">Default</Badge>
-              </div>
-              <Button variant="outline" className="w-full">
-                Add Payment Method
-              </Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+
+                <div className="space-y-2">
+                  <Label htmlFor="role">Role</Label>
+                  <Select
+                    value={formData.role}
+                    onValueChange={(value) => handleInputChange('role', value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="agent">Agent</SelectItem>
+                      <SelectItem value="supervisor">Supervisor</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">Enable Email Integration</p>
+                      <p className="text-xs text-muted-foreground">
+                        Allow this user to fetch emails and send replies through their Gmail account
+                      </p>
+                    </div>
+                    <Switch
+                      checked={formData.enableEmailIntegration}
+                      onCheckedChange={(checked) => handleInputChange('enableEmailIntegration', checked)}
+                    />
+                  </div>
+
+                  {formData.enableEmailIntegration && (
+                    <div className="space-y-4 rounded-lg border p-4 bg-muted/50">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="gmailAddress">Gmail Address *</Label>
+                          <Input
+                            id="gmailAddress"
+                            type="email"
+                            placeholder="john.agent@gmail.com"
+                            value={formData.gmailAddress}
+                            onChange={(e) => handleInputChange('gmailAddress', e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="gmailAppPassword">Gmail App Password *</Label>
+                          <Input
+                            id="gmailAppPassword"
+                            type="password"
+                            placeholder="xxxx xxxx xxxx xxxx"
+                            value={formData.gmailAppPassword}
+                            onChange={(e) => handleInputChange('gmailAppPassword', e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Generate an app password in your Gmail security settings
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="agentSignature">Email Signature (Optional)</Label>
+                        <Textarea
+                          id="agentSignature"
+                          placeholder={`Best regards,\n${formData.name}\nAidlY Support Team`}
+                          rows={4}
+                          value={formData.agentSignature}
+                          onChange={(e) => handleInputChange('agentSignature', e.target.value)}
+                        />
+                      </div>
+
+                      <div className="rounded-lg bg-blue-50 p-3 text-sm">
+                        <p className="font-medium text-blue-900">Email Integration Benefits:</p>
+                        <ul className="mt-1 space-y-1 text-blue-800">
+                          <li>• Automatic email fetching every 5 minutes</li>
+                          <li>• Replies sent from agent's own Gmail address</li>
+                          <li>• Professional email threading and formatting</li>
+                          <li>• Centralized ticket management</li>
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-4">
+                  <Button
+                    onClick={handleCreateUser}
+                    disabled={isLoading}
+                    className="w-full"
+                  >
+                    {isLoading ? 'Creating User...' : 'Create User'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

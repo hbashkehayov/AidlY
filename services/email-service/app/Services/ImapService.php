@@ -222,6 +222,11 @@ class ImapService
         // Process attachments
         $attachments = $this->processAttachments($message);
 
+        // Convert inline images (CID references) to base64 data URIs
+        if ($bodyHtml && !empty($attachments)) {
+            $bodyHtml = $this->embedInlineImages($bodyHtml, $attachments, $message);
+        }
+
         // Extract headers
         $date = $message->getDate();
         $dateString = null;
@@ -262,6 +267,58 @@ class ImapService
             'is_processed' => false,
             'retry_count' => 0,
         ];
+    }
+
+    /**
+     * Embed inline images in HTML by converting CID references to base64 data URIs
+     */
+    protected function embedInlineImages(string $html, array $attachments, Message $message): string
+    {
+        // Get all attachments with content IDs (inline images)
+        $attachmentCollection = $message->getAttachments();
+
+        foreach ($attachmentCollection as $attachment) {
+            try {
+                $contentId = $attachment->getContentId();
+
+                if ($contentId) {
+                    // Remove angle brackets if present
+                    $contentId = trim($contentId, '<>');
+
+                    // Get attachment content and convert to base64
+                    $content = $attachment->getContent();
+                    $base64Content = base64_encode($content);
+                    $mimeType = $attachment->getMimeType();
+
+                    // Create data URI
+                    $dataUri = "data:{$mimeType};base64,{$base64Content}";
+
+                    // Replace CID references with data URI
+                    // Handle various CID formats: cid:xxx, cid:xxx@domain, etc.
+                    $html = preg_replace(
+                        [
+                            '/src=["\']cid:' . preg_quote($contentId, '/') . '["\']/',
+                            '/src=["\']cid:' . preg_quote($contentId, '/') . '@[^"\']*["\']/',
+                        ],
+                        'src="' . $dataUri . '"',
+                        $html
+                    );
+
+                    Log::debug("Embedded inline image", [
+                        'content_id' => $contentId,
+                        'mime_type' => $mimeType,
+                        'size' => strlen($content),
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::error("Failed to embed inline image", [
+                    'message_id' => $message->getMessageId(),
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $html;
     }
 
     /**
@@ -311,13 +368,20 @@ class ImapService
                 $content = $attachment->getContent();
                 $base64Content = base64_encode($content);
 
+                // Get content ID for inline images
+                $contentId = $attachment->getContentId();
+                if ($contentId) {
+                    $contentId = trim($contentId, '<>');
+                }
+
                 $attachments[] = [
                     'filename' => $fileName,
                     'size' => $fileSize,
                     'mime_type' => $attachment->getMimeType(),
                     'extension' => $extension,
                     'content_base64' => $base64Content,
-                    'is_inline' => $attachment->getContentId() ? true : false,
+                    'is_inline' => $contentId ? true : false,
+                    'content_id' => $contentId,
                 ];
 
             } catch (\Exception $e) {

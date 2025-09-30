@@ -16,6 +16,8 @@ class Kernel extends ConsoleKernel
         Commands\FetchEmailsCommand::class,
         Commands\ProcessEmailsCommand::class,
         Commands\EmailToTicketCommand::class,
+        Commands\ProcessSharedMailboxCommand::class,
+        Commands\ProcessEmailsSingleCommand::class,
     ];
 
     /**
@@ -26,45 +28,26 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // Main email-to-ticket conversion process every 5 minutes
+        // 1. Fetch emails from Gmail and queue them
+        $schedule->command('email:process')
+            ->everyFiveMinutes()
+            ->withoutOverlapping(10)
+            ->appendOutputTo(storage_path('logs/email-processing.log'))
+            ->description('Fetch emails from Gmail and queue them');
+
+        // 2. Convert queued emails to tickets
         $schedule->command('emails:to-tickets')
             ->everyFiveMinutes()
-            ->withoutOverlapping(10) // Wait up to 10 minutes for overlapping
-            ->runInBackground()
+            ->withoutOverlapping(10)
             ->appendOutputTo(storage_path('logs/email-to-ticket.log'))
-            ->emailOutputOnFailure(env('ADMIN_EMAIL', 'admin@aidly.com'))
-            ->description('Fetch emails and convert them to tickets');
+            ->description('Convert queued emails to tickets');
 
         // Cleanup old attachments daily at 2 AM
         $schedule->call(function () {
-            app(\App\Services\AttachmentService::class)->cleanupOldAttachments(90);
+            if (class_exists(\App\Services\AttachmentService::class)) {
+                app(\App\Services\AttachmentService::class)->cleanupOldAttachments(90);
+            }
         })->dailyAt('02:00')
           ->description('Clean up attachments older than 90 days');
-
-        // Retry failed emails every 15 minutes
-        $schedule->command('emails:to-tickets --process-only --limit=20')
-            ->everyFifteenMinutes()
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->description('Retry processing failed emails');
-
-        // Legacy commands (kept for backward compatibility)
-        // Fetch emails every 5 minutes
-        $schedule->command('emails:fetch')
-            ->everyFiveMinutes()
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->when(function () {
-                return env('USE_LEGACY_EMAIL_COMMANDS', false);
-            });
-
-        // Process emails every 2 minutes
-        $schedule->command('emails:process')
-            ->everyTwoMinutes()
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->when(function () {
-                return env('USE_LEGACY_EMAIL_COMMANDS', false);
-            });
     }
 }

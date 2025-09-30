@@ -331,25 +331,29 @@ export default function TicketsPage() {
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Avatar className="h-8 w-8">
-                          <AvatarFallback>C</AvatarFallback>
+                          <AvatarFallback>
+                            {ticket.client?.name?.charAt(0)?.toUpperCase() || 'C'}
+                          </AvatarFallback>
                         </Avatar>
                         <div>
-                          <p className="text-sm font-medium">Client {ticket.client_id?.slice(-8) || 'Unknown'}</p>
-                          <p className="text-xs text-muted-foreground">ID: {ticket.client_id}</p>
+                          <p className="text-sm font-medium">{ticket.client?.name || 'Unknown Client'}</p>
+                          {ticket.client?.email && (
+                            <p className="text-xs text-muted-foreground">{ticket.client.email}</p>
+                          )}
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                     <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
                     <TableCell>
-                      {ticket.assigned_agent_id ? (
+                      {ticket.assigned_agent ? (
                         <div className="flex items-center gap-2">
                           <Avatar className="h-6 w-6">
                             <AvatarFallback className="text-xs">
-                              A
+                              {ticket.assigned_agent.name?.charAt(0)?.toUpperCase() || 'A'}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="text-sm">Agent {ticket.assigned_agent_id.slice(-8)}</span>
+                          <span className="text-sm">{ticket.assigned_agent.name}</span>
                         </div>
                       ) : (
                         <span className="text-sm text-muted-foreground">Unassigned</span>

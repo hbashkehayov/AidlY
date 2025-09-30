@@ -87,6 +87,16 @@ class EmailToTicketService
             throw new \Exception("Email account not configured for auto ticket creation");
         }
 
+        // Skip system emails (mailer-daemon, no-reply, etc.)
+        if ($this->isSystemEmail($email->from_address)) {
+            $email->markAsProcessed(null); // Mark as processed without creating ticket
+            Log::info("Skipped system email", [
+                'from' => $email->from_address,
+                'subject' => $email->subject,
+            ]);
+            throw new \Exception("Skipped system email from: " . $email->from_address);
+        }
+
         // Check if this is a reply to existing ticket
         $existingTicket = $this->findExistingTicket($email);
 
@@ -128,10 +138,26 @@ class EmailToTicketService
         }
 
         // Second, try to find by subject line (ticket number pattern)
+        // This handles various formats:
+        // - TKT-001234
+        // - [Ticket #TKT-001234]
+        // - Re: TKT-001234
+        // - Ticket: TKT-001234
         $subject = $email->subject;
-        if (preg_match('/\bTKT-(\d{6})\b/', $subject, $matches)) {
-            $ticketNumber = $matches[0];
-            return $this->findTicketByNumber($ticketNumber);
+        if (preg_match('/TKT-(\d{6})/', $subject, $matches)) {
+            $ticketNumber = 'TKT-' . $matches[1];
+            Log::info("Found ticket number in subject", [
+                'subject' => $subject,
+                'ticket_number' => $ticketNumber
+            ]);
+            $ticket = $this->findTicketByNumber($ticketNumber);
+            if ($ticket) {
+                Log::info("Matched existing ticket by number", [
+                    'ticket_id' => $ticket['id'],
+                    'ticket_number' => $ticketNumber
+                ]);
+                return $ticket;
+            }
         }
 
         // Third, try to find recent tickets from same client
@@ -249,18 +275,30 @@ class EmailToTicketService
      */
     protected function createTicketFromEmail(EmailQueue $email, EmailAccount $emailAccount): array
     {
-        // Find or create client
-        $client = $this->findOrCreateClient($email->from_address);
+        // First, try to find existing client (don't create yet)
+        $client = $this->findClient($email->from_address);
+        $clientId = $client ? $client['id'] : null;
+        $isNewClient = !$client;
 
-        if (!$client) {
-            throw new \Exception("Failed to find or create client for email");
+        // Prepare description - prefer HTML body over plain text, with fallback
+        $description = $email->body_html ?: $email->body_plain ?: $email->content;
+
+        // If description is empty, use subject as description (for system emails like mailer-daemon)
+        if (empty(trim($description))) {
+            $description = $email->subject;
+            Log::warning("Email has empty body, using subject as description", [
+                'email_id' => $email->id,
+                'from' => $email->from_address,
+                'subject' => $email->subject,
+            ]);
         }
 
         // Prepare ticket data
         $ticketData = [
             'subject' => $email->subject,
-            'description' => $email->content,
-            'client_id' => $client['id'],
+            'description' => $description,
+            'client_id' => $clientId,
+            'client_email' => $email->from_address, // Pass email for ticket service to handle client creation
             'source' => 'email',
             'priority' => $emailAccount->default_ticket_priority ?: 'medium',
             'category_id' => $emailAccount->default_category_id,
@@ -294,6 +332,27 @@ class EmailToTicketService
 
         $ticket = $ticketResponse['data'];
 
+        // Only create client if ticket was successfully created and client didn't exist
+        if ($isNewClient && !$clientId) {
+            try {
+                $createdClient = $this->createClient($email->from_address);
+                if ($createdClient) {
+                    Log::info("Created client after successful ticket creation", [
+                        'client_id' => $createdClient['id'],
+                        'email' => $email->from_address,
+                        'ticket_id' => $ticket['id'],
+                    ]);
+                }
+            } catch (\Exception $e) {
+                // Log but don't fail - ticket is already created
+                Log::warning("Failed to create client after ticket creation", [
+                    'email' => $email->from_address,
+                    'ticket_id' => $ticket['id'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         // Process attachments if any
         if ($email->hasAttachments()) {
             $this->processEmailAttachments($email, $ticket['id']);
@@ -315,9 +374,18 @@ class EmailToTicketService
      */
     protected function addCommentToTicket(string $ticketId, EmailQueue $email): array
     {
+        // Prefer HTML body over plain text for comments as well
         $commentData = [
-            'content' => $email->content,
+            'content' => $email->body_html ?: $email->body_plain ?: $email->content,
             'is_internal_note' => false,
+            // Email metadata for Gmail-style display
+            'from_address' => $email->from_address,
+            'to_addresses' => $email->to_addresses,
+            'cc_addresses' => $email->cc_addresses,
+            'subject' => $email->subject,
+            'body_html' => $email->body_html,
+            'body_plain' => $email->body_plain,
+            'headers' => $email->headers,
             'metadata' => [
                 'email_message_id' => $email->message_id,
                 'email_account_id' => $email->email_account_id,
@@ -355,12 +423,11 @@ class EmailToTicketService
     }
 
     /**
-     * Find or create client by email address
+     * Find existing client by email address
      */
-    protected function findOrCreateClient(string $email): ?array
+    protected function findClient(string $email): ?array
     {
         try {
-            // Try to find existing client
             $response = Http::get("{$this->clientServiceUrl}/api/v1/clients", [
                 'email' => $email,
                 'limit' => 1
@@ -372,8 +439,22 @@ class EmailToTicketService
                     return $clients[0];
                 }
             }
+        } catch (\Exception $e) {
+            Log::error("Error finding client", [
+                'email' => $email,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
-            // Create new client if not found
+        return null;
+    }
+
+    /**
+     * Create new client
+     */
+    protected function createClient(string $email): ?array
+    {
+        try {
             $clientData = [
                 'email' => $email,
                 'name' => $this->extractNameFromEmail($email),
@@ -391,13 +472,59 @@ class EmailToTicketService
             ]);
 
         } catch (\Exception $e) {
-            Log::error("Error finding/creating client", [
+            Log::error("Error creating client", [
                 'email' => $email,
                 'error' => $e->getMessage(),
             ]);
         }
 
         return null;
+    }
+
+    /**
+     * Find or create client by email address (legacy method for compatibility)
+     */
+    protected function findOrCreateClient(string $email): ?array
+    {
+        $client = $this->findClient($email);
+        if ($client) {
+            return $client;
+        }
+
+        return $this->createClient($email);
+    }
+
+    /**
+     * Check if email is from a system/automated sender
+     */
+    protected function isSystemEmail(string $email): bool
+    {
+        $email = strtolower(trim($email));
+
+        // List of system email patterns to skip
+        $systemPatterns = [
+            'mailer-daemon@',
+            'postmaster@',
+            'no-reply@',
+            'noreply@',
+            'do-not-reply@',
+            'donotreply@',
+            'bounce@',
+            'bounces@',
+            'notification@',
+            'notifications@',
+            'automated@',
+            'daemon@',
+            'system@',
+        ];
+
+        foreach ($systemPatterns as $pattern) {
+            if (strpos($email, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

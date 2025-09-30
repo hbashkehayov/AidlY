@@ -50,6 +50,14 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
         // Temporary public ticket access for debugging
         $router->get('tickets', 'TicketController@index');
+
+        // Get ticket by ticket number (for email threading) - MUST come before {id} route
+        $router->get('tickets/by-number/{ticketNumber}', 'TicketController@getByNumber');
+
+        // Get ticket by message ID (for email threading) - MUST come before {id} route
+        $router->get('tickets/by-message-id', 'TicketController@getByMessageId');
+
+        // Get specific ticket by ID
         $router->get('tickets/{id}', 'TicketController@show');
 
         // Temporary public update for development
@@ -60,6 +68,15 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
         // Public ticket creation for email service integration
         $router->post('tickets', 'TicketController@store');
+
+        // Ticket statistics by clients (for client service) - Public for inter-service communication
+        $router->get('tickets/stats/by-clients', 'TicketController@getTicketStatsByClients');
+
+        // Overall ticket count - Public for inter-service communication
+        $router->get('tickets/stats/total', 'TicketController@getTotalTicketCount');
+
+        // Delete all tickets for a client (for client service) - Public for inter-service communication
+        $router->delete('clients/{clientId}/tickets', 'TicketController@deleteClientTickets');
 
     });
 
@@ -88,6 +105,14 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
             $router->post('{id}/comments', 'TicketController@addComment');
             $router->get('{id}/comments', 'CommentController@index'); // Get comments for specific ticket
             $router->get('{id}/history', 'TicketController@history');
+        });
+
+        // Assignment management routes
+        $router->group(['prefix' => 'assignments'], function () use ($router) {
+            $router->get('agents/workload', 'TicketController@getAgentWorkloads');
+            $router->get('agents/available', 'TicketController@getAvailableAgents');
+            $router->post('auto-assign', 'TicketController@bulkAutoAssign');
+            $router->post('rebalance', 'TicketController@rebalanceWorkload');
         });
 
         // Comment management routes (global comments access)

@@ -307,4 +307,127 @@ class EmailAccountController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get all agent email accounts
+     */
+    public function agentAccounts()
+    {
+        $accounts = EmailAccount::where('user_id', '!=', null)
+            ->where('account_type', 'shared_mailbox')
+            ->get()
+            ->map(function ($account) {
+                return [
+                    'id' => $account->id,
+                    'user_id' => $account->user_id,
+                    'email_address' => $account->email_address,
+                    'name' => $account->name,
+                    'is_active' => $account->is_active,
+                    'last_sync_at' => $account->last_sync_at,
+                    'created_at' => $account->created_at,
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $accounts
+        ]);
+    }
+
+    /**
+     * Update email account by user ID
+     */
+    public function updateByUser(Request $request, string $userId)
+    {
+        $validator = Validator::make($request->all(), [
+            'gmail_address' => 'required|email',
+            'gmail_app_password' => 'required|string',
+            'signature_template' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            // Find existing account or create new one
+            $account = EmailAccount::where('user_id', $userId)->first();
+
+            if (!$account) {
+                $account = new EmailAccount();
+                $account->user_id = $userId;
+                $account->account_type = 'shared_mailbox';
+            }
+
+            // Update account details
+            $account->email_address = $request->gmail_address;
+            $account->name = $account->name ?: 'Agent Account';
+
+            // Gmail IMAP settings
+            $account->imap_host = 'imap.gmail.com';
+            $account->imap_port = 993;
+            $account->imap_username = $request->gmail_address;
+            $account->imap_password = $request->gmail_app_password;
+            $account->imap_use_ssl = true;
+
+            // Gmail SMTP settings
+            $account->smtp_host = 'smtp.gmail.com';
+            $account->smtp_port = 587;
+            $account->smtp_username = $request->gmail_address;
+            $account->smtp_password = $request->gmail_app_password;
+            $account->smtp_use_tls = true;
+
+            $account->signature_template = $request->signature_template;
+            $account->auto_create_tickets = true;
+            $account->is_active = true;
+
+            $account->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Agent email account updated successfully',
+                'data' => [
+                    'id' => $account->id,
+                    'email_address' => $account->email_address,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update agent email account',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Disable agent email account
+     */
+    public function disableByUser(string $userId)
+    {
+        try {
+            $account = EmailAccount::where('user_id', $userId)->first();
+
+            if ($account) {
+                $account->is_active = false;
+                $account->save();
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Agent email account disabled successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to disable agent email account',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }

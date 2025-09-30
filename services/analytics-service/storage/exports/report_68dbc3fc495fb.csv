@@ -1,0 +1,66 @@
+"AidlY Analytics Report"
+"Generated: 2025-09-30 11:50:20"
+"Period: 2025-08-31 to 2025-09-30"
+
+"Summary Statistics"
+Metric,Value
+"Total tickets",43
+"New tickets",30
+"Open tickets",6
+"Pending tickets",3
+"Resolved tickets",3
+"Closed tickets",1
+"Urgent priority",3
+"High priority",1
+"Medium priority",35
+"Low priority",4
+"Total clients",29
+"Total agents",6
+"Date from",2025-08-31
+"Date to",2025-09-30
+
+"Ticket Details"
+"Ticket Number",Subject,Status,Priority,Client,Agent,"Created At","Updated At"
+TKT-003,"Feature request: Dark mode",new,low,"Bob Wilson",Unassigned,"2025-09-24 09:47:11.922293","2025-09-29 11:52:30.978363"
+TKT-004,"Application crash on export",open,urgent,"Alice Brown","Bob Agent","2025-09-24 07:47:11.922293","2025-09-26 08:57:37.50094"
+TKT-001003,"Request for dark mode feature",new,low,"Bob Wilson",Unassigned,"2025-09-24 07:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-001008,"Feature request: API rate limiting",new,medium,"Bob Wilson",Unassigned,"2025-09-24 23:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-001009,"Security concern: unauthorized access",open,urgent,"Sarah Johnson","Test User","2025-09-25 07:05:30.068879","2025-09-26 08:57:37.50094"
+TKT-002,"Invoice not received",pending,medium,"Jane Smith","Charlie Agent","2025-09-23 12:47:11.922293","2025-09-26 08:57:37.50094"
+TKT-001023,"Need help with login",new,medium,Customer,Unassigned,"2025-09-29 08:01:41","2025-09-29 08:01:41"
+TKT-001002,"Payment processing failed",pending,urgent,"Alice Smith","Test User","2025-09-25 07:20:30.068879","2025-09-26 08:57:37.50094"
+TKT-001007,"Invoice not generated",pending,medium,"Alice Smith",Unassigned,"2025-09-25 01:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-005,"How to integrate API?",resolved,medium,"Charlie Davis","Alice Agent","2025-09-17 12:47:11.922293","2025-09-26 08:57:37.50094"
+TKT-001004,"Application crashes on mobile",resolved,medium,"Sarah Johnson","Test User","2025-09-23 07:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-001010,"Account upgrade request",resolved,low,"Mike Chen","Test User","2025-09-24 07:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-001005,"How to export data to CSV",closed,low,"Mike Chen","Test User","2025-09-22 07:50:30.068879","2025-09-26 08:57:37.50094"
+TKT-001012,"Issue with login to AidlY dashboard",new,medium,"Hristiyan Bashkehayov",Unassigned,"2025-09-29 06:15:30.342801","2025-09-29 07:15:30.342801"
+TKT-001013,"Feature request: Dark mode for dashboard",new,medium,"Hristiyan Bashkehayov",Unassigned,"2025-09-29 05:15:30.342801","2025-09-29 07:15:30.342801"
+TKT-001014,"How to export ticket data?",new,medium,"Hristiyan Bashkehayov",Unassigned,"2025-09-29 04:15:30.342801","2025-09-29 07:15:30.342801"
+TKT-001022,"Billing question",new,medium,User,Unassigned,"2025-09-29 08:01:05","2025-09-29 08:01:05"
+TKT-001024,"Issue with AidlY Platform - Cannot access dashboard",new,medium,"Hristiyan Bashkehayov",Unassigned,"2025-09-29 08:01:41","2025-09-29 08:01:41"
+TKT-001025,"Your account is live – next, add your business info",new,medium,"Googlecommunityteam Noreply",Unassigned,"2025-09-29 08:40:27","2025-09-29 08:40:27"
+TKT-001026,"Check your Google Account privacy settings",new,medium,"No Reply",Unassigned,"2025-09-29 08:40:27","2025-09-29 08:40:27"
+TKT-001027,"🚀 Your GitHub launch code",new,medium,Noreply,Unassigned,"2025-09-29 08:40:27","2025-09-29 08:40:27"
+TKT-001028,"How to ship with Laravel Cloud",new,medium,Ship,Unassigned,"2025-09-29 08:40:28","2025-09-29 08:40:28"
+TKT-001029,"🎉 Добре дошли в Inverso.bg!",new,medium,Info,Unassigned,"2025-09-29 08:40:28","2025-09-29 08:40:28"
+TKT-001030,"Your Oracle Account - Verify Your Email Address",new,medium,"Oracle Acct Ww",Unassigned,"2025-09-29 08:40:28","2025-09-29 08:40:28"
+TKT-001031,"Как да започнете с Inverso.bg",new,medium,Info,Unassigned,"2025-09-29 08:40:28","2025-09-29 08:40:28"
+TKT-001032,"Hristiyan, review your Google Account settings",new,medium,"No Reply",Unassigned,"2025-09-29 08:40:29","2025-09-29 08:40:29"
+TKT-001033,"Start setting up your Stripe account",new,medium,Notifications,Unassigned,"2025-09-29 08:40:29","2025-09-29 08:40:29"
+TKT-001036,"Stay Connected to Postman",new,medium,Marketing,Unassigned,"2025-09-29 08:40:30","2025-09-29 08:40:30"
+TKT-001037,"Hristiyan, review your Google Account settings",new,medium,"No Reply",Unassigned,"2025-09-29 08:40:30","2025-09-29 08:40:30"
+TKT-001038,"Multi-factor authentication device added for ngrok.com",new,medium,Contact,Unassigned,"2025-09-29 08:40:31","2025-09-29 08:40:31"
+TKT-001039,"Security alert",new,medium,"No Reply",Unassigned,"2025-09-29 08:40:31","2025-09-29 08:40:31"
+TKT-001040,"You’re in—meet Claude, your new AI assistant",new,medium,Team,Unassigned,"2025-09-29 08:40:31","2025-09-29 08:40:31"
+TKT-001041,"Laravel Cloud March Product Update",new,medium,Ship,Unassigned,"2025-09-29 08:40:31","2025-09-29 08:40:31"
+TKT-001042,"Complete your account application to get started",new,medium,Notifications,Unassigned,"2025-09-29 08:40:31","2025-09-29 08:40:31"
+TKT-001044,"Slack account sign in from a new device",new,medium,Feedback,Unassigned,"2025-09-29 08:40:32","2025-09-29 08:40:32"
+TKT-001045,asdadasdas,open,medium,"H Bashkehayov","Test User","2025-09-29 08:40:32","2025-09-29 11:55:23.7079"
+TKT-001043,"Security alert",open,high,"No Reply","Alice Agent","2025-09-29 08:40:32","2025-09-29 11:48:24.510801"
+TKT-001046,"You have an invitation",new,medium,Invitations,Unassigned,"2025-09-29 12:49:02","2025-09-29 12:49:02"
+TKT-001047,"Security alert",new,medium,"No Reply",Unassigned,"2025-09-29 12:49:02","2025-09-29 12:49:02"
+TKT-001048,"SharedMailbox Test - Email Integration Issue",open,medium,"Test Customer","Alice Johnson","2025-09-29 13:50:13","2025-09-29 13:50:13"
+TKT-001049,"Gmail SharedMailbox Test - Demo for Hristiyan",open,medium,"Hristiyan Bashkehayov","Alice Johnson","2025-09-29 14:00:31","2025-09-29 14:00:31"
+TKT-001050,"Daily test",new,medium,"H Bashkehayov",Unassigned,"2025-09-30 06:35:20","2025-09-30 06:35:20"
+TKT-001051,"final test",new,medium,"H Bashkehayov",Unassigned,"2025-09-30 06:50:07","2025-09-30 06:50:07"

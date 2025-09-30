@@ -18,6 +18,7 @@ class EmailAccount extends Model
     protected $fillable = [
         'name',
         'email_address',
+        'account_type', // 'shared_mailbox' or 'personal' (legacy)
         'imap_host',
         'imap_port',
         'imap_username',
@@ -32,6 +33,8 @@ class EmailAccount extends Model
         'auto_create_tickets',
         'default_ticket_priority',
         'default_category_id',
+        'routing_rules',
+        'signature_template',
         'is_active'
     ];
 
@@ -45,6 +48,7 @@ class EmailAccount extends Model
         'smtp_use_tls' => 'boolean',
         'auto_create_tickets' => 'boolean',
         'is_active' => 'boolean',
+        'routing_rules' => 'array',
         'last_sync_at' => 'datetime',
     ];
 
@@ -148,10 +152,63 @@ class EmailAccount extends Model
     }
 
     /**
+     * Check if this is a shared mailbox
+     */
+    public function isSharedMailbox(): bool
+    {
+        return $this->account_type === 'shared_mailbox';
+    }
+
+    /**
+     * Get routing rules for this mailbox
+     */
+    public function getRoutingRules(): array
+    {
+        return $this->routing_rules ?: [];
+    }
+
+    /**
+     * Get signature template with placeholders
+     */
+    public function getSignatureTemplate(): string
+    {
+        return $this->signature_template ?: "\n\n---\nBest regards,\n{agent_name}\n{department_name}\n{company_name}";
+    }
+
+    /**
+     * Generate agent signature
+     */
+    public function generateAgentSignature(array $agentData): string
+    {
+        $template = $this->getSignatureTemplate();
+        $replacements = [
+            '{agent_name}' => $agentData['name'] ?? 'Support Team',
+            '{agent_email}' => $agentData['email'] ?? $this->email_address,
+            '{department_name}' => $agentData['department'] ?? 'Customer Support',
+            '{company_name}' => env('APP_NAME', 'AidlY Support'),
+            '{mailbox_address}' => $this->email_address,
+        ];
+
+        return str_replace(array_keys($replacements), array_values($replacements), $template);
+    }
+
+    /**
      * Scopes
      */
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    public function scopeSharedMailboxes($query)
+    {
+        return $query->where('account_type', 'shared_mailbox')->where('is_active', true);
+    }
+
+    public function scopeAgentAccounts($query)
+    {
+        return $query->where('account_type', 'shared_mailbox')
+                     ->where('user_id', '!=', null)
+                     ->where('is_active', true);
     }
 }

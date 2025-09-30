@@ -89,3 +89,10 @@ $router->group(['prefix' => 'api/v1/2fa', 'middleware' => 'jwt'], function () us
     $router->get('recovery-codes', 'TwoFactorController@getRecoveryCodes');
     $router->post('recovery-codes/regenerate', 'TwoFactorController@regenerateRecoveryCodes');
 });
+
+// Agent Management (admin only)
+$router->group(['prefix' => 'api/v1/agents', 'middleware' => ['jwt', 'role:admin']], function () use ($router) {
+    $router->get('/', 'AgentManagementController@listAgents');
+    $router->post('/', 'AgentManagementController@createAgent');
+    $router->put('/{id}/email', 'AgentManagementController@updateAgentEmail');
+});

@@ -26,6 +26,12 @@ import {
   Building,
   Star,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileText,
+  FileImage,
+  File,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -85,6 +91,14 @@ interface TicketComment {
   is_internal_note: boolean;
   created_at: string;
   attachments?: any[];
+  // Email metadata
+  from_address?: string;
+  to_addresses?: string[];
+  cc_addresses?: string[];
+  subject?: string;
+  body_html?: string;
+  body_plain?: string;
+  headers?: Record<string, any>;
   user?: {
     id: string;
     name: string;
@@ -98,6 +112,46 @@ interface TicketComment {
     company?: string;
   };
 }
+
+// Helper functions
+const getFileIcon = (mimeType?: string, filename?: string) => {
+  if (!mimeType && !filename) return File;
+  const mime = mimeType?.toLowerCase() || '';
+  const ext = filename?.split('.').pop()?.toLowerCase() || '';
+
+  if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
+    return FileImage;
+  }
+  if (mime.includes('pdf') || mime.includes('document') || mime.includes('text') ||
+      ['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt'].includes(ext)) {
+    return FileText;
+  }
+  return File;
+};
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+};
+
+const hasExternalImages = (html: string): boolean => {
+  if (!html) return false;
+  // Check for external images (http/https URLs, not data URIs)
+  const imgRegex = /<img[^>]+src=["'](https?:\/\/[^"']+)["']/gi;
+  return imgRegex.test(html);
+};
+
+const blockExternalImages = (html: string): string => {
+  if (!html) return html;
+  // Replace external image URLs with placeholder
+  return html.replace(
+    /<img([^>]+)src=["'](https?:\/\/[^"']+)["']/gi,
+    '<img$1src="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'100\'%3E%3Crect width=\'200\' height=\'100\' fill=\'%23f3f4f6\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' dominant-baseline=\'middle\' text-anchor=\'middle\' fill=\'%239ca3af\' font-family=\'Arial\' font-size=\'12\'%3EExternal Image Blocked%3C/text%3E%3C/svg%3E"'
+  );
+};
 
 export default function TicketPage() {
   const { id: ticketId } = useParams();
@@ -118,6 +172,9 @@ export default function TicketPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editedTicket, setEditedTicket] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [expandedEmails, setExpandedEmails] = useState<Record<string, boolean>>({});
+  const [showEmailDetails, setShowEmailDetails] = useState<Record<string, boolean>>({});
+  const [showExternalImages, setShowExternalImages] = useState<Record<string, boolean>>({});
 
   // Data fetching
   const { data: ticket, isLoading, error } = useQuery({
@@ -329,7 +386,7 @@ export default function TicketPage() {
   }
 
   const clientInfo = ticket.client || {
-    name: 'Unknown Client',
+    name: 'Unknown',
     email: 'no-email@example.com',
     company: null,
   };
@@ -441,12 +498,12 @@ export default function TicketPage() {
 
         {/* Three-panel layout - Responsive */}
         <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-4rem)]">
-          {/* Customer Panel - Hidden on mobile, shown on desktop */}
+          {/* Client Panel - Hidden on mobile, shown on desktop */}
           <div className="hidden lg:flex w-64 xl:w-80 bg-white border-r border-gray-200 flex-col flex-shrink-0">
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <User className="h-5 w-5" />
-                Customer
+                Client
               </h3>
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
@@ -475,7 +532,7 @@ export default function TicketPage() {
                   <div className="flex items-center gap-3 text-sm">
                     <Calendar className="h-4 w-4 text-gray-400" />
                     <span className="text-gray-600">
-                      Customer since {ticket.created_at ? format(new Date(ticket.created_at), 'MMM yyyy') : 'Unknown'}
+                      Client since {ticket.created_at ? format(new Date(ticket.created_at), 'MMM yyyy') : 'Unknown'}
                     </span>
                   </div>
                 </div>
@@ -505,108 +562,389 @@ export default function TicketPage() {
             {/* Conversation Area */}
             <div className="flex-1 overflow-y-auto p-4 lg:p-6">
               <div className="max-w-4xl mx-auto space-y-4">
-              {/* Original Message */}
-              <div className="bg-gray-50 border-l-4 border-gray-400 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback className="bg-gray-800 text-white text-sm">
-                      {clientInfo.name.charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-medium text-gray-900">{clientInfo.name}</span>
-                      <span className="text-xs text-gray-500">
-                        {ticket.created_at ? format(new Date(ticket.created_at), 'MMM d, yyyy • h:mm a') : 'Unknown'}
-                      </span>
-                      <Badge variant="outline" className="text-xs bg-gray-100 text-gray-700">
-                        Customer
-                      </Badge>
-                    </div>
-                    <div className="text-gray-700 text-sm leading-relaxed break-words">
-                      <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: ticket.description || '' }} />
-                    </div>
-                    {ticket.attachments && ticket.attachments.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {ticket.attachments.map((attachment: any) => (
-                          <div
-                            key={attachment.id}
-                            className="flex items-center gap-2 p-2 bg-white rounded border text-sm"
-                          >
-                            <Paperclip className="h-4 w-4 text-gray-400" />
-                            <span className="text-gray-700 hover:text-black hover:underline cursor-pointer">
-                              {attachment.filename}
-                            </span>
-                            <span className="text-gray-400 text-xs">
-                              ({(attachment.size / 1024).toFixed(1)} KB)
-                            </span>
+              {/* Original Message - Gmail Style */}
+              <div className="border rounded-lg bg-white">
+                <div className="p-4">
+                  <div className="flex items-start gap-3">
+                    <Avatar className="h-10 w-10 flex-shrink-0">
+                      <AvatarFallback className="bg-gray-700 text-white font-medium">
+                        {clientInfo.name.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-semibold text-gray-900">{clientInfo.name}</span>
+                            <Badge variant="outline" className="text-xs bg-gray-100 text-gray-700">
+                              Client
+                            </Badge>
                           </div>
-                        ))}
+                          <div className="text-sm space-y-1">
+                            <div className="flex items-center gap-2 text-gray-600">
+                              <span className="text-gray-500">to</span>
+                              <span>me</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-500 text-xs">
+                                {ticket.created_at ? format(new Date(ticket.created_at), 'MMM d, yyyy, h:mm a') : 'Unknown'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="text-xs text-gray-500">
+                            {ticket.created_at ? format(new Date(ticket.created_at), 'h:mm a') : ''}
+                          </span>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <Star className="h-4 w-4 text-gray-400" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <Reply className="h-4 w-4 text-gray-600" />
+                          </Button>
+                        </div>
                       </div>
-                    )}
+                    </div>
                   </div>
+                </div>
+                <div className="px-4 pb-4">
+                  {/* External images warning banner */}
+                  {hasExternalImages(ticket.description) && !showExternalImages['ticket-main'] && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-blue-800">
+                        <AlertCircle className="h-4 w-4" />
+                        <span>External images are blocked for your privacy</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowExternalImages(prev => ({ ...prev, 'ticket-main': true }))}
+                        className="text-blue-700 border-blue-300 hover:bg-blue-100"
+                      >
+                        Show Images
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Render full HTML email with iframe for security */}
+                  {ticket.description && (ticket.description.includes('<html') || ticket.description.includes('<body') || ticket.description.includes('<table') || ticket.description.includes('<div')) ? (
+                    ticket.description.includes('<html') ? (
+                      <iframe
+                        srcDoc={showExternalImages['ticket-main'] ? ticket.description : blockExternalImages(ticket.description)}
+                        sandbox="allow-same-origin"
+                        className="w-full border-0 min-h-[400px]"
+                        style={{ height: 'auto' }}
+                        onLoad={(e) => {
+                          const iframe = e.target as HTMLIFrameElement;
+                          if (iframe.contentWindow) {
+                            const height = iframe.contentWindow.document.body.scrollHeight;
+                            iframe.style.height = height + 'px';
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="prose prose-sm max-w-none">
+                        <div
+                          className="email-content"
+                          dangerouslySetInnerHTML={{
+                            __html: showExternalImages['ticket-main']
+                              ? ticket.description || ''
+                              : blockExternalImages(ticket.description || '')
+                          }}
+                          style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                        />
+                      </div>
+                    )
+                  ) : (
+                    <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
+                      {ticket.description}
+                    </pre>
+                  )}
+                  {ticket.attachments && ticket.attachments.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Paperclip className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm font-medium text-gray-700">
+                          {ticket.attachments.length} attachment{ticket.attachments.length !== 1 && 's'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {ticket.attachments.map((attachment: any) => {
+                          const FileIcon = getFileIcon(attachment.mime_type, attachment.filename);
+                          return (
+                            <div
+                              key={attachment.id}
+                              className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                            >
+                              <div className="flex-shrink-0">
+                                <div className="h-10 w-10 rounded bg-gray-100 flex items-center justify-center">
+                                  <FileIcon className="h-5 w-5 text-gray-600" />
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">
+                                  {attachment.filename}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {formatFileSize(attachment.size)}
+                                </p>
+                              </div>
+                              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="px-4 pb-4 flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowComposeReply(true)}
+                    className="gap-2"
+                  >
+                    <Reply className="h-4 w-4" />
+                    Reply
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsForwardDialogOpen(true)}
+                    className="gap-2"
+                  >
+                    <Forward className="h-4 w-4" />
+                    Forward
+                  </Button>
                 </div>
               </div>
 
-              {/* Comments */}
+              {/* Comments - Chat-Style Message Thread */}
               {ticket.comments && ticket.comments.length > 0 && (
-                <div className="space-y-4">
-                  {ticket.comments.map((comment: TicketComment) => (
-                    <div
-                      key={comment.id}
-                      className={cn(
-                        "rounded-lg p-4 border",
-                        comment.is_internal_note
-                          ? "bg-yellow-50 border-l-4 border-yellow-400"
-                          : comment.user_id
-                          ? "bg-gray-50 border-l-4 border-gray-400"
-                          : "bg-gray-50 border-l-4 border-gray-400"
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <Avatar className="h-8 w-8">
+                <div className="space-y-6">
+                  {ticket.comments.map((comment: TicketComment) => {
+                    const isExpanded = expandedEmails[comment.id] !== false;
+                    const showDetails = showEmailDetails[comment.id] || false;
+                    // Determine sender info based on comment type
+                    const isFromAgent = (comment.user_id && comment.user_id.trim() !== '') || comment.is_internal_note;
+                    const senderName = isFromAgent
+                      ? (comment.user?.name || 'Agent')
+                      : (comment.client?.name || clientInfo.name || comment.from_address || 'Client');
+                    const initials = senderName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
+                    const displayContent = comment.body_html || comment.content;
+
+                    return (
+                      <div
+                        key={comment.id}
+                        className={cn(
+                          "flex gap-3",
+                          isFromAgent ? "flex-row" : "flex-row-reverse"
+                        )}
+                      >
+                        {/* Avatar */}
+                        <Avatar className={cn(
+                          "h-10 w-10 flex-shrink-0",
+                          !isFromAgent && "ring-2 ring-blue-100"
+                        )}>
                           <AvatarFallback
                             className={cn(
-                              "text-white text-sm",
+                              "font-semibold text-white",
                               comment.is_internal_note
-                                ? "bg-yellow-600"
-                                : comment.user_id
-                                ? "bg-gray-600"
-                                : "bg-gray-700"
+                                ? "bg-amber-500"
+                                : isFromAgent
+                                  ? "bg-indigo-600"
+                                  : "bg-blue-500"
                             )}
                           >
-                            {(comment.user?.name || comment.client?.name || 'U').charAt(0).toUpperCase()}
+                            {initials}
                           </AvatarFallback>
                         </Avatar>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="font-medium text-gray-900">
-                              {comment.user?.name || comment.client?.name || 'Unknown User'}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              {format(new Date(comment.created_at), 'MMM d, yyyy • h:mm a')}
+
+                        {/* Message Bubble */}
+                        <div className={cn(
+                          "flex-1 max-w-[85%]",
+                          isFromAgent ? "mr-auto" : "ml-auto"
+                        )}>
+                          {/* Sender Info Header */}
+                          <div className={cn(
+                            "flex items-center gap-2 mb-2",
+                            isFromAgent ? "flex-row" : "flex-row-reverse"
+                          )}>
+                            <span className={cn(
+                              "font-semibold text-sm",
+                              comment.is_internal_note
+                                ? "text-amber-700"
+                                : isFromAgent
+                                  ? "text-indigo-900"
+                                  : "text-blue-900"
+                            )}>
+                              {senderName}
                             </span>
                             <Badge
                               variant="outline"
                               className={cn(
-                                "text-xs",
+                                "text-xs font-medium",
                                 comment.is_internal_note
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : comment.user_id
-                                  ? "bg-gray-100 text-gray-700"
-                                  : "bg-gray-100 text-gray-700"
+                                  ? "bg-amber-50 text-amber-700 border-amber-300"
+                                  : isFromAgent
+                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                    : "bg-blue-50 text-blue-700 border-blue-200"
                               )}
                             >
-                              {comment.is_internal_note ? 'Internal Note' : comment.user_id ? 'Agent' : 'Customer'}
+                              {comment.is_internal_note ? '🔒 Internal Note' : (comment.user_id && comment.user_id.trim() !== '') ? '👤 Agent' : '💬 Client'}
                             </Badge>
+                            <span className="text-xs text-gray-500">
+                              {format(new Date(comment.created_at), 'MMM d, h:mm a')}
+                            </span>
                           </div>
-                          <div className="text-gray-700 text-sm leading-relaxed break-words">
-                            <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: comment.content }} />
+
+                          {/* Message Content Card */}
+                          <div
+                            className={cn(
+                              "rounded-2xl shadow-sm transition-all border",
+                              comment.is_internal_note
+                                ? "bg-amber-50 border-amber-200"
+                                : isFromAgent
+                                  ? "bg-white border-gray-200"
+                                  : "bg-blue-50 border-blue-200"
+                            )}
+                          >
+                            <div className="p-4">
+                              <div className={cn(
+                                "flex items-start justify-between gap-2 mb-2",
+                                !isExpanded && "mb-0"
+                              )}>
+                                <div className="flex-1 min-w-0">
+
+                                  {/* Collapsed preview */}
+                                  {!isExpanded && (
+                                    <p className="text-sm text-gray-700 line-clamp-2">
+                                      {comment.body_plain || (displayContent && displayContent.replace(/<[^>]*>/g, '').substring(0, 150))}
+                                    </p>
+                                  )}
+                                </div>
+
+                                {/* Expand/Collapse Button */}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 flex-shrink-0"
+                                  onClick={() => setExpandedEmails(prev => ({ ...prev, [comment.id]: !isExpanded }))}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-4 w-4 text-gray-600" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4 text-gray-600" />
+                                  )}
+                                </Button>
+                              </div>
+
+                              {/* Attachments preview when collapsed */}
+                              {!isExpanded && comment.attachments && comment.attachments.length > 0 && (
+                                <div className="flex items-center gap-1 mt-2 text-xs text-gray-500">
+                                  <Paperclip className="h-3 w-3" />
+                                  <span>{comment.attachments.length} attachment{comment.attachments.length !== 1 && 's'}</span>
+                                </div>
+                              )}
+
+                              {/* Expanded Message Body */}
+                              {isExpanded && (
+                                <div className="mt-3 pt-3 border-t border-gray-200">
+                            {/* External images warning banner */}
+                            {hasExternalImages(displayContent) && !showExternalImages[comment.id] && (
+                              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm text-blue-800">
+                                  <AlertCircle className="h-4 w-4" />
+                                  <span>External images are blocked for your privacy</span>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setShowExternalImages(prev => ({ ...prev, [comment.id]: true }))}
+                                  className="text-blue-700 border-blue-300 hover:bg-blue-100"
+                                >
+                                  Show Images
+                                </Button>
+                              </div>
+                            )}
+
+                            {/* Render full HTML email with iframe for security if it's a complete HTML doc */}
+                            {displayContent && displayContent.includes('<html') ? (
+                              <iframe
+                                srcDoc={showExternalImages[comment.id] ? displayContent : blockExternalImages(displayContent)}
+                                sandbox="allow-same-origin"
+                                className="w-full border-0 min-h-[400px]"
+                                style={{ height: 'auto' }}
+                                onLoad={(e) => {
+                                  const iframe = e.target as HTMLIFrameElement;
+                                  if (iframe.contentWindow) {
+                                    const height = iframe.contentWindow.document.body.scrollHeight;
+                                    iframe.style.height = height + 'px';
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <div className="prose prose-sm max-w-none">
+                                <div
+                                  className="email-content"
+                                  dangerouslySetInnerHTML={{
+                                    __html: showExternalImages[comment.id]
+                                      ? displayContent
+                                      : blockExternalImages(displayContent)
+                                  }}
+                                  style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                                />
+                              </div>
+                            )}
+
+                            {comment.attachments && comment.attachments.length > 0 && (
+                              <div className="mt-4 pt-4 border-t border-gray-200">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <Paperclip className="h-4 w-4 text-gray-500" />
+                                  <span className="text-sm font-medium text-gray-700">
+                                    {comment.attachments.length} attachment{comment.attachments.length !== 1 && 's'}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  {comment.attachments.map((attachment: any) => {
+                                    const FileIcon = getFileIcon(attachment.mime_type, attachment.filename);
+                                    return (
+                                      <div
+                                        key={attachment.id}
+                                        className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                                      >
+                                        <div className="flex-shrink-0">
+                                          <div className="h-10 w-10 rounded bg-gray-100 flex items-center justify-center">
+                                            <FileIcon className="h-5 w-5 text-gray-600" />
+                                          </div>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium text-gray-900 truncate">
+                                            {attachment.filename}
+                                          </p>
+                                          <p className="text-xs text-gray-500">
+                                            {formatFileSize(attachment.size)}
+                                          </p>
+                                        </div>
+                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <Download className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               </div>

@@ -57,6 +57,7 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
     // Exports
     $router->group(['prefix' => 'exports'], function () use ($router) {
+        $router->post('/reports', 'ExportController@reports');
         $router->post('/tickets', 'ExportController@tickets');
         $router->post('/agents', 'ExportController@agents');
         $router->post('/custom', 'ExportController@custom');

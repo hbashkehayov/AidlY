@@ -6,13 +6,22 @@ use App\Models\Ticket;
 use App\Models\TicketComment;
 use App\Models\TicketHistory;
 use App\Models\Category;
+use App\Services\TicketAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class TicketController extends Controller
 {
+    protected $assignmentService;
+
+    public function __construct(TicketAssignmentService $assignmentService)
+    {
+        $this->assignmentService = $assignmentService;
+    }
+
     /**
      * Safely get the authenticated user ID
      */
@@ -88,9 +97,54 @@ class TicketController extends Controller
         $perPage = min($request->get('per_page', 20), 100);
         $tickets = $query->paginate($perPage);
 
+        // Manually load assigned agent data and client data
+        $ticketsData = $tickets->items();
+        $agentIds = collect($ticketsData)->pluck('assigned_agent_id')->filter()->unique()->toArray();
+        $clientIds = collect($ticketsData)->pluck('client_id')->filter()->unique()->toArray();
+
+        // Load agents
+        if (!empty($agentIds)) {
+            $agents = DB::table('users')
+                ->whereIn('id', $agentIds)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($ticketsData as $ticket) {
+                if ($ticket->assigned_agent_id && isset($agents[$ticket->assigned_agent_id])) {
+                    $ticket->assigned_agent = $agents[$ticket->assigned_agent_id];
+                } else {
+                    $ticket->assigned_agent = null;
+                }
+            }
+        } else {
+            foreach ($ticketsData as $ticket) {
+                $ticket->assigned_agent = null;
+            }
+        }
+
+        // Load clients
+        if (!empty($clientIds)) {
+            $clients = DB::table('clients')
+                ->whereIn('id', $clientIds)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($ticketsData as $ticket) {
+                if ($ticket->client_id && isset($clients[$ticket->client_id])) {
+                    $ticket->client = $clients[$ticket->client_id];
+                } else {
+                    $ticket->client = null;
+                }
+            }
+        } else {
+            foreach ($ticketsData as $ticket) {
+                $ticket->client = null;
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $tickets->items(),
+            'data' => $ticketsData,
             'meta' => [
                 'current_page' => $tickets->currentPage(),
                 'per_page' => $tickets->perPage(),
@@ -115,13 +169,20 @@ class TicketController extends Controller
             'source' => 'required|string|in:email,web_form,chat,phone,social_media,api,internal',
             'category_id' => 'nullable|string|uuid|exists:categories,id',
             'assigned_agent_id' => 'nullable|string|uuid',
+            'assigned_department_id' => 'nullable|string|uuid|exists:departments,id',
             'tags' => 'nullable|array',
             'tags.*' => 'string|max:50',
-            'custom_fields' => 'nullable|array'
+            'custom_fields' => 'nullable|array',
+            'auto_assign' => 'nullable|boolean', // New parameter to control auto-assignment
+            'assignment_strategy' => 'nullable|string|in:least_busy,round_robin,priority_based,skill_based'
         ]);
 
         try {
             DB::beginTransaction();
+
+            // Check if auto-assignment is enabled (default: true if no agent specified)
+            $autoAssign = $request->get('auto_assign', !$request->has('assigned_agent_id'));
+            $assignmentStrategy = $request->get('assignment_strategy', 'least_busy');
 
             $ticket = Ticket::create([
                 'subject' => $request->subject,
@@ -131,31 +192,74 @@ class TicketController extends Controller
                 'source' => $request->source,
                 'category_id' => $request->category_id,
                 'assigned_agent_id' => $request->assigned_agent_id,
+                'assigned_department_id' => $request->assigned_department_id,
                 'tags' => $request->get('tags') ? $request->get('tags') : null,
                 'custom_fields' => $request->get('custom_fields') ? $request->get('custom_fields') : null,
-                'status' => $request->assigned_agent_id ? Ticket::STATUS_OPEN : Ticket::STATUS_NEW,
+                'status' => Ticket::STATUS_NEW,
             ]);
 
             // Log ticket creation
             TicketHistory::create([
                 'ticket_id' => $ticket->id,
-                'user_id' => $this->getUserId(), // Handle unauthenticated requests safely
+                'user_id' => $this->getUserId(),
                 'action' => 'created',
                 'metadata' => [
                     'source' => $request->source,
                     'user_agent' => $request->header('User-Agent'),
                     'ip_address' => $request->ip(),
+                    'auto_assign' => $autoAssign,
                 ]
             ]);
 
-            // If assigned, log assignment
-            if ($request->assigned_agent_id) {
+            // Auto-assign if enabled and no agent was manually specified
+            if ($autoAssign && !$request->assigned_agent_id) {
+                Log::info('Attempting auto-assignment', [
+                    'ticket_id' => $ticket->id,
+                    'ticket_number' => $ticket->ticket_number,
+                    'strategy' => $assignmentStrategy
+                ]);
+
+                $assignedAgentId = $this->assignmentService->autoAssign($ticket, [
+                    'strategy' => $assignmentStrategy
+                ]);
+
+                if ($assignedAgentId) {
+                    // Log auto-assignment
+                    TicketHistory::create([
+                        'ticket_id' => $ticket->id,
+                        'user_id' => null, // System assignment
+                        'action' => 'auto_assigned',
+                        'new_value' => $assignedAgentId,
+                        'metadata' => [
+                            'strategy' => $assignmentStrategy,
+                            'auto_assigned' => true
+                        ]
+                    ]);
+
+                    // Refresh ticket to get updated assigned_agent_id
+                    $ticket->refresh();
+
+                    Log::info('Ticket auto-assigned successfully', [
+                        'ticket_id' => $ticket->id,
+                        'assigned_agent_id' => $assignedAgentId
+                    ]);
+                } else {
+                    Log::warning('Auto-assignment failed - no available agent', [
+                        'ticket_id' => $ticket->id,
+                        'department_id' => $ticket->assigned_department_id
+                    ]);
+                }
+            } elseif ($request->assigned_agent_id) {
+                // Manual assignment - log it
                 TicketHistory::create([
                     'ticket_id' => $ticket->id,
-                    'user_id' => $this->getUserId(), // Handle unauthenticated requests safely
+                    'user_id' => $this->getUserId(),
                     'action' => 'assigned',
                     'new_value' => $request->assigned_agent_id,
                 ]);
+
+                // Update status to open
+                $ticket->update(['status' => Ticket::STATUS_OPEN]);
             }
 
             DB::commit();
@@ -171,11 +275,111 @@ class TicketController extends Controller
         } catch (\Exception $e) {
             DB::rollback();
 
+            Log::error('Ticket creation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'error' => [
                     'message' => 'Failed to create ticket',
                     'details' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+                ]
+            ], 500);
+        }
+    }
+
+    /**
+     * Get ticket by message ID (for email threading)
+     */
+    public function getByMessageId(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'message_id' => 'required|string'
+        ]);
+
+        $messageId = $request->get('message_id');
+
+        try {
+            // Search in custom_fields->email_message_id
+            $ticket = Ticket::active()
+                ->whereRaw("custom_fields->>'email_message_id' = ?", [$messageId])
+                ->with(['category'])
+                ->first();
+
+            if (!$ticket) {
+                return response()->json([
+                    'success' => false,
+                    'error' => ['message' => 'Ticket not found']
+                ], 404);
+            }
+
+            // Manually load assigned agent and client data
+            if ($ticket->assigned_agent_id) {
+                $agent = DB::table('users')->where('id', $ticket->assigned_agent_id)->first();
+                $ticket->assigned_agent = $agent;
+            }
+
+            if ($ticket->client_id) {
+                $client = DB::table('clients')->where('id', $ticket->client_id)->first();
+                $ticket->client = $client;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $ticket
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'message' => 'Failed to fetch ticket',
+                    'details' => config('app.debug') ? $e->getMessage() : null
+                ]
+            ], 500);
+        }
+    }
+
+    /**
+     * Get ticket by ticket number
+     */
+    public function getByNumber(string $ticketNumber): JsonResponse
+    {
+        try {
+            $ticket = Ticket::active()
+                ->where('ticket_number', $ticketNumber)
+                ->with(['category'])
+                ->first();
+
+            if (!$ticket) {
+                return response()->json([
+                    'success' => false,
+                    'error' => ['message' => 'Ticket not found']
+                ], 404);
+            }
+
+            // Manually load assigned agent and client data
+            if ($ticket->assigned_agent_id) {
+                $agent = DB::table('users')->where('id', $ticket->assigned_agent_id)->first();
+                $ticket->assigned_agent = $agent;
+            }
+
+            if ($ticket->client_id) {
+                $client = DB::table('clients')->where('id', $ticket->client_id)->first();
+                $ticket->client = $client;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $ticket
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'message' => 'Failed to fetch ticket',
+                    'details' => config('app.debug') ? $e->getMessage() : null
                 ]
             ], 500);
         }
@@ -210,6 +414,49 @@ class TicketController extends Controller
                 // Log error but don't fail the request
                 error_log("Failed to fetch client data for ticket {$id}: " . $e->getMessage());
             }
+        }
+
+        // Load user information for comments (agents who replied)
+        if ($ticket->comments) {
+            $userIds = $ticket->comments->pluck('user_id')->filter()->unique()->toArray();
+            if (!empty($userIds)) {
+                $users = DB::table('users')
+                    ->whereIn('id', $userIds)
+                    ->get()
+                    ->keyBy('id');
+
+                foreach ($ticket->comments as $comment) {
+                    if ($comment->user_id && isset($users[$comment->user_id])) {
+                        $comment->user = $users[$comment->user_id];
+                    }
+                }
+            }
+
+            // Load client information for comments from clients
+            $clientIds = $ticket->comments->pluck('client_id')->filter()->unique()->toArray();
+            if (!empty($clientIds)) {
+                try {
+                    $clients = DB::table('clients')
+                        ->whereIn('id', $clientIds)
+                        ->get()
+                        ->keyBy('id');
+
+                    foreach ($ticket->comments as $comment) {
+                        if ($comment->client_id && isset($clients[$comment->client_id])) {
+                            $comment->client = $clients[$comment->client_id];
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Log error but don't fail the request
+                    error_log("Failed to fetch client data for comments: " . $e->getMessage());
+                }
+            }
+        }
+
+        // Load assigned agent information
+        if ($ticket->assigned_agent_id) {
+            $agent = DB::table('users')->where('id', $ticket->assigned_agent_id)->first();
+            $ticket->assigned_agent = $agent;
         }
 
         return response()->json([
@@ -444,23 +691,32 @@ class TicketController extends Controller
 
             // Determine the comment author - NO AUTHENTICATION REQUIRED
             $userId = $this->getUserId();
-            $clientId = $request->client_id ?? $ticket->client_id;
+            $clientId = null;
             $clientEmail = $request->client_email;
 
             // Check if this is coming from the public endpoint
             $isPublicEndpoint = str_contains($request->path(), '/public/');
 
-            // For public endpoints and non-authenticated users, just allow it
-            // We don't enforce authentication - anyone can comment
-            if ($isPublicEndpoint) {
-                // For public comments, use the ticket's client as author if no client specified
-                if (!$clientId) {
-                    $clientId = $ticket->client_id;
-                }
-                // Allow internal notes to be false for public, but don't allow setting them to true
-                if ($request->get('is_internal_note', false) && !$userId) {
-                    // Silently convert to regular comment instead of blocking
-                    $request->merge(['is_internal_note' => false]);
+            // If user is authenticated (agent/admin), set user_id and leave client_id as null
+            // If user is NOT authenticated, it's from a client
+            if ($userId) {
+                // Comment from authenticated user (agent/admin) - user_id is set, client_id is null
+                $clientId = null;
+            } else {
+                // Comment from client - set client_id, user_id is null
+                $clientId = $request->client_id ?? $ticket->client_id;
+
+                // For public endpoints and non-authenticated users, just allow it
+                if ($isPublicEndpoint) {
+                    // For public comments, use the ticket's client as author if no client specified
+                    if (!$clientId) {
+                        $clientId = $ticket->client_id;
+                    }
+                    // Allow internal notes to be false for public, but don't allow setting them to true
+                    if ($request->get('is_internal_note', false)) {
+                        // Silently convert to regular comment instead of blocking
+                        $request->merge(['is_internal_note' => false]);
+                    }
                 }
             }
 
@@ -748,5 +1004,332 @@ class TicketController extends Controller
             'status' => $status,
             'body' => $body
         ];
+    }
+
+    /**
+     * Get ticket statistics grouped by client IDs
+     * Used by client service to enrich client data with ticket counts
+     */
+    public function getTicketStatsByClients(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'client_ids' => 'required|string',
+        ]);
+
+        $clientIds = explode(',', $request->input('client_ids'));
+        $clientIds = array_filter(array_map('trim', $clientIds));
+
+        if (empty($clientIds)) {
+            return response()->json([
+                'success' => true,
+                'data' => []
+            ]);
+        }
+
+        // Query tickets grouped by client_id using parameter binding
+        $placeholders = implode(',', array_fill(0, count($clientIds), '?'));
+
+        $stats = DB::select("
+            SELECT
+                client_id,
+                COUNT(*) as total,
+                COUNT(CASE WHEN status = 'new' THEN 1 END) as new,
+                COUNT(CASE WHEN status = 'open' THEN 1 END) as open,
+                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+                COUNT(CASE WHEN status = 'on_hold' THEN 1 END) as on_hold,
+                COUNT(CASE WHEN status = 'resolved' THEN 1 END) as resolved,
+                COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
+                COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled,
+                COUNT(CASE WHEN status IN ('new', 'open', 'pending', 'on_hold') THEN 1 END) as active,
+                COUNT(CASE WHEN status IN ('resolved', 'closed', 'cancelled') THEN 1 END) as inactive
+            FROM tickets
+            WHERE client_id IN ({$placeholders})
+              AND is_deleted = false
+            GROUP BY client_id
+        ", $clientIds);
+
+        // Format the response as a map
+        $result = [];
+        foreach ($stats as $stat) {
+            $result[$stat->client_id] = [
+                'total' => (int) $stat->total,
+                'new' => (int) $stat->new,
+                'open' => (int) $stat->open,
+                'pending' => (int) $stat->pending,
+                'on_hold' => (int) $stat->on_hold,
+                'resolved' => (int) $stat->resolved,
+                'closed' => (int) $stat->closed,
+                'cancelled' => (int) $stat->cancelled,
+                'active' => (int) $stat->active,
+                'inactive' => (int) $stat->inactive,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result
+        ]);
+    }
+
+    /**
+     * Get total ticket count across all clients
+     */
+    public function getTotalTicketCount(Request $request): JsonResponse
+    {
+        $totalCount = DB::table('tickets')
+            ->where('is_deleted', false)
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'total' => (int) $totalCount
+            ]
+        ]);
+    }
+
+    /**
+     * Get agent workload statistics
+     */
+    public function getAgentWorkloads(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'department_id' => 'nullable|string|uuid'
+        ]);
+
+        try {
+            $departmentId = $request->get('department_id');
+            $workloads = $this->assignmentService->getAgentWorkloads($departmentId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $workloads
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Failed to fetch agent workloads']
+            ], 500);
+        }
+    }
+
+    /**
+     * Get available agents for assignment
+     */
+    public function getAvailableAgents(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'department_id' => 'nullable|string|uuid',
+            'priority' => 'nullable|string|in:low,medium,high,urgent'
+        ]);
+
+        try {
+            $agents = $this->assignmentService->getAvailableAgents(
+                $request->get('department_id'),
+                $request->get('priority')
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $agents
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Failed to fetch available agents']
+            ], 500);
+        }
+    }
+
+    /**
+     * Manually trigger auto-assignment for unassigned tickets
+     */
+    public function bulkAutoAssign(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'department_id' => 'nullable|string|uuid',
+            'strategy' => 'nullable|string|in:least_busy,round_robin,priority_based,skill_based',
+            'limit' => 'nullable|integer|min:1|max:100'
+        ]);
+
+        try {
+            $limit = $request->get('limit', 10);
+            $strategy = $request->get('strategy', 'least_busy');
+            $departmentId = $request->get('department_id');
+
+            // Get unassigned tickets
+            $query = Ticket::whereNull('assigned_agent_id')
+                ->whereIn('status', [Ticket::STATUS_NEW, Ticket::STATUS_OPEN])
+                ->where('is_deleted', false);
+
+            if ($departmentId) {
+                $query->where('assigned_department_id', $departmentId);
+            }
+
+            $tickets = $query->limit($limit)->get();
+
+            $results = [
+                'total_processed' => 0,
+                'assigned' => 0,
+                'failed' => 0,
+                'tickets' => []
+            ];
+
+            foreach ($tickets as $ticket) {
+                $results['total_processed']++;
+
+                $assignedAgentId = $this->assignmentService->autoAssign($ticket, [
+                    'strategy' => $strategy
+                ]);
+
+                if ($assignedAgentId) {
+                    $results['assigned']++;
+                    $results['tickets'][] = [
+                        'ticket_id' => $ticket->id,
+                        'ticket_number' => $ticket->ticket_number,
+                        'assigned_agent_id' => $assignedAgentId,
+                        'status' => 'assigned'
+                    ];
+
+                    // Log the assignment
+                    TicketHistory::create([
+                        'ticket_id' => $ticket->id,
+                        'user_id' => $this->getUserId(),
+                        'action' => 'bulk_auto_assigned',
+                        'new_value' => $assignedAgentId,
+                        'metadata' => ['strategy' => $strategy]
+                    ]);
+                } else {
+                    $results['failed']++;
+                    $results['tickets'][] = [
+                        'ticket_id' => $ticket->id,
+                        'ticket_number' => $ticket->ticket_number,
+                        'status' => 'failed',
+                        'reason' => 'No available agent'
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $results,
+                'message' => "Assigned {$results['assigned']} out of {$results['total_processed']} tickets"
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Bulk auto-assignment failed', [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Bulk auto-assignment failed']
+            ], 500);
+        }
+    }
+
+    /**
+     * Rebalance workload across agents
+     */
+    public function rebalanceWorkload(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'department_id' => 'nullable|string|uuid'
+        ]);
+
+        try {
+            $departmentId = $request->get('department_id');
+            $results = $this->assignmentService->rebalanceWorkload($departmentId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $results,
+                'message' => "Rebalanced {$results['reassigned']} tickets across {$results['agents_balanced']} agents"
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Workload rebalancing failed', [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Workload rebalancing failed']
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete all tickets for a specific client
+     * This is called when a client is deleted from the client service
+     */
+    public function deleteClientTickets(string $clientId): JsonResponse
+    {
+        try {
+            // Get all tickets for this client BEFORE starting transaction
+            $tickets = Ticket::where('client_id', $clientId)->get();
+
+            if ($tickets->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'No tickets found for this client',
+                    'deleted_count' => 0
+                ]);
+            }
+
+            $deletedCount = 0;
+            $ticketIds = $tickets->pluck('id')->toArray();
+
+            DB::beginTransaction();
+
+            // Bulk delete related data for better performance
+            // 1. Delete email_queue references (cross-service FK constraint)
+            DB::table('email_queue')->whereIn('ticket_id', $ticketIds)->delete();
+
+            // 2. Delete all ticket comments for these tickets
+            TicketComment::whereIn('ticket_id', $ticketIds)->delete();
+
+            // 3. Delete all ticket history for these tickets
+            TicketHistory::whereIn('ticket_id', $ticketIds)->delete();
+
+            // 4. Delete attachments if table exists
+            $tableExists = DB::select("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'ticket_attachments')");
+            if ($tableExists[0]->exists) {
+                DB::table('ticket_attachments')->whereIn('ticket_id', $ticketIds)->delete();
+            }
+
+            // 5. Hard delete all tickets
+            $deletedCount = Ticket::whereIn('id', $ticketIds)->delete();
+
+            DB::commit();
+
+            \Illuminate\Support\Facades\Log::info('Client tickets deleted', [
+                'client_id' => $clientId,
+                'tickets_deleted' => $deletedCount
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully deleted {$deletedCount} tickets for client",
+                'deleted_count' => $deletedCount
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            \Illuminate\Support\Facades\Log::error('Failed to delete client tickets', [
+                'client_id' => $clientId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'DELETE_FAILED',
+                    'message' => 'Failed to delete client tickets: ' . $e->getMessage()
+                ]
+            ], 500);
+        }
     }
 }
