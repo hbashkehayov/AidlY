@@ -215,15 +215,25 @@ class SharedMailboxSmtpService
         }
 
         // Add custom headers
+        $customMessageId = null;
         foreach ($headers as $name => $value) {
             if (!empty($value)) {
+                // Check if Message-ID was provided in custom headers
+                if (strtolower($name) === 'message-id') {
+                    $customMessageId = $value;
+                }
                 $email->getHeaders()->addTextHeader($name, $value);
             }
         }
 
-        // Add tracking headers
-        $messageId = $this->generateMessageId($mailbox->email_address);
-        $email->getHeaders()->addIdHeader('Message-ID', $messageId);
+        // Add tracking Message-ID (use custom one if provided, otherwise generate)
+        if ($customMessageId) {
+            $messageId = $customMessageId;
+            $email->getHeaders()->addIdHeader('Message-ID', $messageId);
+        } else {
+            $messageId = $this->generateMessageId($mailbox->email_address);
+            $email->getHeaders()->addIdHeader('Message-ID', $messageId);
+        }
 
         // Set reply-to to the shared mailbox
         $email->replyTo(new Address($mailbox->email_address, $mailbox->name));
@@ -363,6 +373,11 @@ class SharedMailboxSmtpService
     protected function buildReplyHeaders(array $replyData): array
     {
         $headers = [];
+
+        // Set Message-ID for email threading (if provided)
+        if (!empty($replyData['message_id'])) {
+            $headers['Message-ID'] = $replyData['message_id'];
+        }
 
         // Threading headers
         if (!empty($replyData['original_message_id'])) {

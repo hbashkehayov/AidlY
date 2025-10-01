@@ -9,25 +9,16 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   TrendingUp,
   TrendingDown,
-  Users,
+  CheckCircle2,
   Ticket,
   Clock,
   AlertCircle,
   ArrowRight,
-  MoreVertical,
-  Calendar,
-  Filter,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { format, subDays } from 'date-fns';
 import Link from 'next/link';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { format as formatDate } from 'date-fns';
 
@@ -73,42 +64,31 @@ function TicketRow({ ticket }: any) {
   };
 
   return (
-    <div className="flex items-center justify-between p-4 hover:bg-accent/50 rounded-lg transition-colors">
-      <div className="flex items-center space-x-4">
-        <Avatar className="h-9 w-9">
-          <AvatarFallback>C</AvatarFallback>
-        </Avatar>
-        <div className="space-y-1">
-          <div className="flex items-center space-x-2">
-            <p className="text-sm font-medium">{ticket.ticket_number}</p>
-            <Badge variant={statusColors[ticket.status]}>{ticket.status}</Badge>
-            <Badge variant={priorityColors[ticket.priority]}>{ticket.priority}</Badge>
+    <Link href={`/tickets/${ticket.id}`}>
+      <div className="flex items-center justify-between p-4 hover:bg-accent/50 rounded-lg transition-colors cursor-pointer">
+        <div className="flex items-center space-x-4">
+          <Avatar className="h-9 w-9">
+            <AvatarFallback>C</AvatarFallback>
+          </Avatar>
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <p className="text-sm font-medium">{ticket.ticket_number}</p>
+              <Badge variant={statusColors[ticket.status]}>{ticket.status}</Badge>
+              <Badge variant={priorityColors[ticket.priority]}>{ticket.priority}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">{ticket.subject}</p>
+            <p className="text-xs text-muted-foreground">
+              Client {ticket.client_id?.slice(-8) || 'Unknown'} • {ticket.assigned_agent_id ? `Agent ${ticket.assigned_agent_id.slice(-8)}` : 'Unassigned'}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">{ticket.subject}</p>
+        </div>
+        <div className="flex items-center space-x-2">
           <p className="text-xs text-muted-foreground">
-            Client {ticket.client_id?.slice(-8) || 'Unknown'} • {ticket.assigned_agent_id ? `Agent ${ticket.assigned_agent_id.slice(-8)}` : 'Unassigned'}
+            {format(new Date(ticket.created_at), 'MMM d, h:mm a')}
           </p>
         </div>
       </div>
-      <div className="flex items-center space-x-2">
-        <p className="text-xs text-muted-foreground">
-          {format(new Date(ticket.created_at), 'MMM d, h:mm a')}
-        </p>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem>View Details</DropdownMenuItem>
-            <DropdownMenuItem>Assign Agent</DropdownMenuItem>
-            <DropdownMenuItem>Change Priority</DropdownMenuItem>
-            <DropdownMenuItem>Close Ticket</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
+    </Link>
   );
 }
 
@@ -197,19 +177,7 @@ export default function DashboardPage() {
             Welcome back! Here's what's happening with your support team today.
           </p>
         </div>
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" size="sm">
-            <Calendar className="mr-2 h-4 w-4" />
-            Today
-          </Button>
-          <Button variant="outline" size="sm">
-            <Filter className="mr-2 h-4 w-4" />
-            Filter
-          </Button>
-          <Button>
-            Create Ticket
-          </Button>
-        </div>
+        {/* Action buttons removed */}
       </div>
 
       {/* Stats Grid */}
@@ -236,11 +204,11 @@ export default function DashboardPage() {
           icon={AlertCircle}
         />
         <StatCard
-          title="Active Customers"
-          value={statsLoading ? '...' : stats?.active_customers || '0'}
-          change={statsLoading ? '0' : Math.abs(stats?.active_customers_change || 0).toString()}
-          trend={stats?.active_customers_change >= 0 ? "up" : "down"}
-          icon={Users}
+          title="Resolved Tickets"
+          value={statsLoading ? '...' : stats?.resolved_tickets || '0'}
+          change={statsLoading ? '0' : Math.abs(stats?.resolved_tickets_change || 0).toString()}
+          trend={stats?.resolved_tickets_change >= 0 ? "up" : "down"}
+          icon={CheckCircle2}
         />
       </div>
 

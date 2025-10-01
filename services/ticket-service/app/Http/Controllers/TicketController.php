@@ -7,6 +7,7 @@ use App\Models\TicketComment;
 use App\Models\TicketHistory;
 use App\Models\Category;
 use App\Services\TicketAssignmentService;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
@@ -16,10 +17,12 @@ use Illuminate\Support\Facades\Log;
 class TicketController extends Controller
 {
     protected $assignmentService;
+    protected $notificationService;
 
-    public function __construct(TicketAssignmentService $assignmentService)
+    public function __construct(TicketAssignmentService $assignmentService, NotificationService $notificationService)
     {
         $this->assignmentService = $assignmentService;
+        $this->notificationService = $notificationService;
     }
 
     /**
@@ -28,6 +31,19 @@ class TicketController extends Controller
     protected function getUserId(): ?string
     {
         try {
+            // Try to get from request attributes (set by JwtMiddleware)
+            $authUser = request()->attributes->get('auth_user');
+            if ($authUser && isset($authUser['id'])) {
+                return $authUser['id'];
+            }
+
+            // Fallback to request->user if available
+            $user = request()->input('user');
+            if ($user && isset($user['id'])) {
+                return $user['id'];
+            }
+
+            // Last resort - try auth()->id() (might work in some contexts)
             return auth()->id();
         } catch (\Exception $e) {
             return null;
@@ -243,6 +259,16 @@ class TicketController extends Controller
                         'ticket_id' => $ticket->id,
                         'assigned_agent_id' => $assignedAgentId
                     ]);
+
+                    // Send notification to assigned agent
+                    try {
+                        $agent = DB::table('users')->where('id', $assignedAgentId)->first();
+                        if ($agent) {
+                            $this->notificationService->notifyTicketAssigned($ticket, $agent, 'System');
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to send auto-assignment notification', ['error' => $e->getMessage()]);
+                    }
                 } else {
                     Log::warning('Auto-assignment failed - no available agent', [
                         'ticket_id' => $ticket->id,
@@ -260,6 +286,16 @@ class TicketController extends Controller
 
                 // Update status to open
                 $ticket->update(['status' => Ticket::STATUS_OPEN]);
+
+                // Send notification to manually assigned agent
+                try {
+                    $agent = DB::table('users')->where('id', $request->assigned_agent_id)->first();
+                    if ($agent) {
+                        $this->notificationService->notifyTicketAssigned($ticket, $agent, $this->getUserId());
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Failed to send manual assignment notification', ['error' => $e->getMessage()]);
+                }
             }
 
             DB::commit();
@@ -641,6 +677,16 @@ class TicketController extends Controller
                 'new_value' => $request->assigned_agent_id,
             ]);
 
+            // Send notification to assigned agent
+            try {
+                $agent = DB::table('users')->where('id', $request->assigned_agent_id)->first();
+                if ($agent) {
+                    $this->notificationService->notifyTicketAssigned($ticket, $agent, $this->getUserId());
+                }
+            } catch (\Exception $e) {
+                Log::warning('Failed to send assignment notification', ['error' => $e->getMessage()]);
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $ticket,
@@ -694,6 +740,15 @@ class TicketController extends Controller
             $clientId = null;
             $clientEmail = $request->client_email;
 
+            // Debug logging
+            \Log::info('Comment creation attempt', [
+                'userId_from_getUserId' => $userId,
+                'auth_user_attributes' => request()->attributes->get('auth_user'),
+                'request_user' => request()->input('user'),
+                'authorization_header' => request()->header('Authorization') ? substr(request()->header('Authorization'), 0, 30) . '...' : 'none',
+                'request_path' => $request->path()
+            ]);
+
             // Check if this is coming from the public endpoint
             $isPublicEndpoint = str_contains($request->path(), '/public/');
 
@@ -701,9 +756,11 @@ class TicketController extends Controller
             // If user is NOT authenticated, it's from a client
             if ($userId) {
                 // Comment from authenticated user (agent/admin) - user_id is set, client_id is null
+                \Log::info('Comment from authenticated user', ['user_id' => $userId]);
                 $clientId = null;
             } else {
                 // Comment from client - set client_id, user_id is null
+                \Log::info('Comment from unauthenticated request, treating as client');
                 $clientId = $request->client_id ?? $ticket->client_id;
 
                 // For public endpoints and non-authenticated users, just allow it
@@ -736,10 +793,32 @@ class TicketController extends Controller
                 'metadata' => !empty($metadata) ? $metadata : null
             ]);
 
+            // Automated status management (only for non-internal notes)
+            if (!$request->get('is_internal_note', false)) {
+                $this->updateTicketStatusOnReply($ticket, $userId, $clientId);
+            }
+
             DB::commit();
 
-            // Send email notification to client if this is not an internal note
+            // Send notification webhook (for both agents and clients)
             if (!$request->get('is_internal_note', false)) {
+                try {
+                    // Get the author object
+                    $author = null;
+                    if ($userId) {
+                        $author = DB::table('users')->where('id', $userId)->first();
+                    } elseif ($clientId) {
+                        $author = DB::table('clients')->where('id', $clientId)->first();
+                    }
+
+                    if ($author) {
+                        $this->notificationService->notifyCommentAdded($ticket, $comment, $author);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Failed to send comment notification', ['error' => $e->getMessage()]);
+                }
+
+                // Send email notification to client if this is not an internal note
                 $this->sendCommentNotificationEmail($ticket, $comment);
             }
 
@@ -876,6 +955,12 @@ class TicketController extends Controller
             if ($clientEmail) {
                 \Log::info('DEBUGGING: Preparing to send email', ['to' => $clientEmail]);
 
+                // Generate Message-ID for email threading
+                $messageId = $this->generateMessageId($ticket->id, $comment->id);
+
+                // Get original message ID for threading
+                $originalMessageId = $ticket->custom_fields['email_message_id'] ?? null;
+
                 // Send notification to email service
                 $emailServiceUrl = env('EMAIL_SERVICE_URL', 'http://localhost:8005');
                 $emailData = [
@@ -884,12 +969,15 @@ class TicketController extends Controller
                     'subject' => 'Re: ' . $ticket->subject . ' [Ticket #' . $ticket->ticket_number . ']',
                     'body_html' => $this->formatEmailBody($ticket, $comment),
                     'body_plain' => strip_tags($comment->content) . "\n\n" .
-                                   "View ticket: " . env('APP_URL', 'http://localhost:3000') . '/tickets/' . $ticket->id
+                                   "View ticket: " . env('APP_URL', 'http://localhost:3000') . '/tickets/' . $ticket->id,
+                    'message_id' => $messageId,  // Add Message-ID for threading
+                    'in_reply_to' => $originalMessageId,  // Add In-Reply-To header
                 ];
 
                 \Log::info('DEBUGGING: Sending email request', [
                     'url' => $emailServiceUrl . '/api/v1/emails/send',
-                    'data' => $emailData
+                    'data' => $emailData,
+                    'message_id' => $messageId
                 ]);
 
                 $result = $this->makeHttpRequest(
@@ -899,6 +987,11 @@ class TicketController extends Controller
                 );
 
                 \Log::info('DEBUGGING: Email service response', ['result' => $result]);
+
+                // Store the Message-ID in the ticket for threading
+                if ($result && $result['status'] === 200) {
+                    $this->storeMessageIdInTicket($ticket->id, $comment->id, $messageId);
+                }
             } else {
                 \Log::error('DEBUGGING: No client email found', [
                     'ticket_id' => $ticket->id,
@@ -1330,6 +1423,237 @@ class TicketController extends Controller
                     'message' => 'Failed to delete client tickets: ' . $e->getMessage()
                 ]
             ], 500);
+        }
+    }
+
+    /**
+     * Get ticket by sent message ID (for email threading - agent replies)
+     */
+    public function getBySentMessageId(Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'message_id' => 'required|string|max:500'
+        ]);
+
+        $messageId = $request->input('message_id');
+
+        try {
+            // Search for ticket containing this message ID in sent_message_ids array
+            $ticket = Ticket::whereRaw('? = ANY(sent_message_ids)', [$messageId])
+                ->with(['client', 'assignedAgent', 'category'])
+                ->first();
+
+            if (!$ticket) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ticket not found for the given sent message ID',
+                    'data' => null
+                ], 404);
+            }
+
+            Log::debug('Found ticket by sent message ID', [
+                'message_id' => $messageId,
+                'ticket_id' => $ticket->id,
+                'ticket_number' => $ticket->ticket_number
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $ticket
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error finding ticket by sent message ID', [
+                'message_id' => $messageId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error searching for ticket',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Store sent message ID for email threading
+     */
+    public function storeMessageId(string $id, Request $request): JsonResponse
+    {
+        $this->validate($request, [
+            'message_id' => 'required|string|max:500',
+            'comment_id' => 'nullable|string|uuid'
+        ]);
+
+        $messageId = $request->input('message_id');
+        $commentId = $request->input('comment_id');
+
+        try {
+            $ticket = Ticket::findOrFail($id);
+
+            // Use the database function to append message ID (avoids duplicates)
+            DB::statement('SELECT append_sent_message_id_to_ticket(?, ?)', [$id, $messageId]);
+
+            // If comment ID provided, also store it in the comment record
+            if ($commentId) {
+                $comment = TicketComment::find($commentId);
+                if ($comment && $comment->ticket_id === $id) {
+                    $comment->sent_message_id = $messageId;
+                    $comment->save();
+
+                    Log::debug('Stored message ID in comment', [
+                        'comment_id' => $commentId,
+                        'message_id' => $messageId
+                    ]);
+                }
+            }
+
+            Log::info('Stored sent message ID in ticket', [
+                'ticket_id' => $id,
+                'ticket_number' => $ticket->ticket_number,
+                'message_id' => $messageId,
+                'comment_id' => $commentId
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Message ID stored successfully',
+                'data' => [
+                    'ticket_id' => $id,
+                    'message_id' => $messageId
+                ]
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ticket not found'
+            ], 404);
+
+        } catch (\Exception $e) {
+            Log::error('Error storing message ID in ticket', [
+                'ticket_id' => $id,
+                'message_id' => $messageId,
+                'comment_id' => $commentId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error storing message ID',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Generate a unique Message-ID for email threading
+     */
+    private function generateMessageId(string $ticketId, ?string $commentId = null): string
+    {
+        $domain = parse_url(env('APP_URL', 'localhost'), PHP_URL_HOST) ?: 'aidly.local';
+        $timestamp = time();
+        $randomPart = substr(md5(uniqid('', true)), 0, 8);
+
+        if ($commentId) {
+            return "<ticket-{$ticketId}-comment-{$commentId}-{$timestamp}-{$randomPart}@{$domain}>";
+        }
+
+        return "<ticket-{$ticketId}-{$timestamp}-{$randomPart}@{$domain}>";
+    }
+
+    /**
+     * Store the sent Message-ID in the ticket for threading
+     */
+    private function storeMessageIdInTicket(string $ticketId, ?string $commentId, string $messageId): void
+    {
+        try {
+            // Use database function to append message ID
+            DB::statement('SELECT append_sent_message_id_to_ticket(?, ?)', [$ticketId, $messageId]);
+
+            // If comment ID provided, also store it in the comment record
+            if ($commentId) {
+                DB::table('ticket_comments')
+                    ->where('id', $commentId)
+                    ->update(['sent_message_id' => $messageId]);
+
+                \Log::debug('Stored message ID in comment', [
+                    'comment_id' => $commentId,
+                    'message_id' => $messageId
+                ]);
+            }
+
+            \Log::info('Stored sent message ID in ticket', [
+                'ticket_id' => $ticketId,
+                'message_id' => $messageId,
+                'comment_id' => $commentId
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error storing Message-ID in ticket', [
+                'ticket_id' => $ticketId,
+                'comment_id' => $commentId,
+                'message_id' => $messageId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Automated status management based on who replies
+     * - Agent reply → Set to "Pending" (waiting for client)
+     * - Client reply → Set to "Open" (agent needs to respond)
+     */
+    private function updateTicketStatusOnReply($ticket, ?string $userId, ?string $clientId): void
+    {
+        $oldStatus = $ticket->status;
+        $newStatus = null;
+
+        // Agent/User replied
+        if ($userId) {
+            // Agent replied - set to "Pending" (waiting for client response)
+            // Only skip if ticket is closed or cancelled (allow reopening resolved tickets)
+            if (!in_array($ticket->status, [Ticket::STATUS_CLOSED, Ticket::STATUS_CANCELLED])) {
+                $newStatus = Ticket::STATUS_PENDING;
+            }
+        }
+        // Client replied
+        elseif ($clientId) {
+            // Client replied - set to "Open" (needs agent attention)
+            // Reopen even if resolved/closed (but not cancelled)
+            if ($ticket->status !== Ticket::STATUS_CANCELLED) {
+                $newStatus = Ticket::STATUS_OPEN;
+            }
+        }
+
+        // Update status if it changed
+        if ($newStatus && $newStatus !== $oldStatus) {
+            $ticket->status = $newStatus;
+            $ticket->save();
+
+            // Log the status change
+            TicketHistory::create([
+                'ticket_id' => $ticket->id,
+                'user_id' => $userId ?? null,
+                'action' => 'status_changed',
+                'old_value' => $oldStatus,
+                'new_value' => $newStatus,
+                'metadata' => [
+                    'auto_changed' => true,
+                    'reason' => $userId ? 'agent_replied' : 'client_replied',
+                    'reopened' => in_array($oldStatus, [Ticket::STATUS_RESOLVED, Ticket::STATUS_CLOSED])
+                ]
+            ]);
+
+            \Log::info('Ticket status auto-updated on reply', [
+                'ticket_id' => $ticket->id,
+                'old_status' => $oldStatus,
+                'new_status' => $newStatus,
+                'user_id' => $userId,
+                'client_id' => $clientId,
+                'reopened' => in_array($oldStatus, [Ticket::STATUS_RESOLVED, Ticket::STATUS_CLOSED])
+            ]);
         }
     }
 }

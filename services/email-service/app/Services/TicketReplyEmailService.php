@@ -24,6 +24,9 @@ class TicketReplyEmailService
         // Get user info for the person who replied
         $userInfo = $this->getUserInfo($commentData['user_id']);
 
+        // Generate Message-ID for email threading
+        $messageId = $this->generateMessageId($ticketData['id'], $commentData['id'] ?? null);
+
         // Prepare reply data for SharedMailboxSmtpService
         $replyData = [
             'ticket_id' => $ticketData['id'],
@@ -42,10 +45,17 @@ class TicketReplyEmailService
             'mailbox_address' => $this->getPreferredMailboxForTicket($ticketData),
             'original_message_id' => $ticketData['metadata']['email_message_id'] ?? null,
             'original_recipient' => $ticketData['metadata']['original_recipient'] ?? null,
+            'message_id' => $messageId, // Add generated Message-ID
+            'comment_id' => $commentData['id'] ?? null,
         ];
 
         // Send email through shared mailbox service
         $result = $this->sharedMailboxSmtpService->sendTicketReply($replyData);
+
+        // Store the Message-ID in the ticket service for threading
+        if ($result['success'] ?? false) {
+            $this->storeMessageIdInTicket($ticketData['id'], $commentData['id'] ?? null, $messageId);
+        }
 
         // Log the sent email
         $this->logSentEmail($ticketData, $commentData, $clientData, $result);
@@ -405,5 +415,58 @@ class TicketReplyEmailService
             'success' => $result['success'] ?? false,
             'message_id' => $result['message_id'] ?? null,
         ]);
+    }
+
+    /**
+     * Generate a unique Message-ID for email threading
+     */
+    protected function generateMessageId(string $ticketId, ?string $commentId = null): string
+    {
+        $domain = parse_url(env('APP_URL', 'localhost'), PHP_URL_HOST) ?: 'aidly.local';
+        $timestamp = time();
+        $randomPart = substr(md5(uniqid('', true)), 0, 8);
+
+        if ($commentId) {
+            return "<ticket-{$ticketId}-comment-{$commentId}-{$timestamp}-{$randomPart}@{$domain}>";
+        }
+
+        return "<ticket-{$ticketId}-{$timestamp}-{$randomPart}@{$domain}>";
+    }
+
+    /**
+     * Store the sent Message-ID in the ticket service for email threading
+     */
+    protected function storeMessageIdInTicket(string $ticketId, ?string $commentId, string $messageId): void
+    {
+        try {
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            $response = Http::post("{$ticketServiceUrl}/api/v1/public/tickets/{$ticketId}/message-id", [
+                'message_id' => $messageId,
+                'comment_id' => $commentId,
+            ]);
+
+            if ($response->successful() && $response->json('success')) {
+                Log::debug('Stored Message-ID in ticket', [
+                    'ticket_id' => $ticketId,
+                    'comment_id' => $commentId,
+                    'message_id' => $messageId,
+                ]);
+            } else {
+                Log::warning('Failed to store Message-ID in ticket', [
+                    'ticket_id' => $ticketId,
+                    'comment_id' => $commentId,
+                    'message_id' => $messageId,
+                    'response' => $response->body(),
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error storing Message-ID in ticket', [
+                'ticket_id' => $ticketId,
+                'comment_id' => $commentId,
+                'message_id' => $messageId,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

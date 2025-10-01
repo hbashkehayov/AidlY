@@ -10,8 +10,9 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { useSearchParams } from 'next/navigation';
 import {
   User,
   Mail,
@@ -40,6 +41,17 @@ import {
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { user, token } = useAuth();
+  const searchParams = useSearchParams();
+
+  // Get tab from URL parameter, default to 'general'
+  const [activeTab, setActiveTab] = useState('general');
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
 
   // User creation form state
   const [isLoading, setIsLoading] = useState(false);
@@ -146,7 +158,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>

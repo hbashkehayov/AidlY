@@ -115,6 +115,21 @@ class EmailController extends Controller
                 'attachments', 'reply_to', 'headers'
             ]);
 
+            // Add Message-ID and In-Reply-To headers if provided for email threading
+            if (!isset($emailData['headers'])) {
+                $emailData['headers'] = [];
+            }
+
+            if ($request->has('message_id')) {
+                $emailData['headers']['Message-ID'] = $request->input('message_id');
+            }
+
+            if ($request->has('in_reply_to')) {
+                $emailData['headers']['In-Reply-To'] = $request->input('in_reply_to');
+                // Also add to References header
+                $emailData['headers']['References'] = $request->input('in_reply_to');
+            }
+
             // Use specific account or default
             if ($request->has('account_id')) {
                 $account = EmailAccount::find($request->account_id);

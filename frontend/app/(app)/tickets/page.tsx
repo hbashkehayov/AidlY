@@ -63,10 +63,8 @@ import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 const statusConfig = {
-  new: { label: 'New', color: 'bg-blue-500', icon: AlertCircle },
   open: { label: 'Open', color: 'bg-yellow-500', icon: Clock },
   pending: { label: 'Pending', color: 'bg-orange-500', icon: Clock },
-  on_hold: { label: 'On Hold', color: 'bg-gray-500', icon: Clock },
   resolved: { label: 'Resolved', color: 'bg-green-500', icon: CheckCircle },
   closed: { label: 'Closed', color: 'bg-gray-400', icon: XCircle },
   cancelled: { label: 'Cancelled', color: 'bg-red-500', icon: XCircle },
@@ -145,13 +143,8 @@ export default function TicketsPage() {
             Manage and respond to customer support tickets
           </p>
         </div>
+        {/* New Ticket button removed */}
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              New Ticket
-            </Button>
-          </DialogTrigger>
           <DialogContent className="sm:max-w-[625px]">
             <DialogHeader>
               <DialogTitle>Create New Ticket</DialogTitle>

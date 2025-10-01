@@ -6,6 +6,7 @@ const AUTH_SERVICE_URL = 'http://localhost:8001/api/v1'; // Base URL for auth se
 const TICKET_API_URL = process.env.NEXT_PUBLIC_TICKET_API_URL || 'http://localhost:8002/api/v1';
 const CLIENT_API_URL = process.env.NEXT_PUBLIC_CLIENT_API_URL || 'http://localhost:8003/api/v1';
 const ANALYTICS_API_URL = process.env.NEXT_PUBLIC_ANALYTICS_API_URL || 'http://localhost:8007/api/v1';
+const NOTIFICATION_API_URL = process.env.NEXT_PUBLIC_NOTIFICATION_API_URL || 'http://localhost:8004/api/v1';
 
 // Create axios instances for each service
 export const authApi = axios.create({
@@ -39,6 +40,13 @@ export const clientApi = axios.create({
 
 export const analyticsApi = axios.create({
   baseURL: ANALYTICS_API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+export const notificationApi = axios.create({
+  baseURL: NOTIFICATION_API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -88,6 +96,7 @@ addAuthInterceptor(userApi);
 addAuthInterceptor(ticketApi);
 addAuthInterceptor(clientApi);
 addAuthInterceptor(analyticsApi);
+addAuthInterceptor(notificationApi);
 
 // API Methods
 export const api = {
@@ -184,6 +193,135 @@ export const api = {
   notifications: {
     counts: () =>
       ticketApi.get('/stats/notification-counts'),
+    list: (params?: any) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      const userRole = user?.role;
+
+      // DEBUG: Log what role we're reading
+      console.log('[API DEBUG] notifications.list - user from localStorage:', user);
+      console.log('[API DEBUG] notifications.list - userRole:', userRole);
+
+      // Convert unread_only to proper boolean if present
+      const processedParams = { ...params };
+      if (processedParams.unread_only !== undefined) {
+        processedParams.unread_only = processedParams.unread_only === true || processedParams.unread_only === 'true' ? 1 : 0;
+      }
+      if (processedParams.view_all !== undefined) {
+        processedParams.view_all = processedParams.view_all === true || processedParams.view_all === 'true' ? 1 : 0;
+      }
+
+      // Always add user_role for proper authorization
+      processedParams.user_role = userRole;
+      processedParams.notifiable_type = 'user';
+
+      console.log('[API DEBUG] notifications.list - processedParams:', processedParams);
+
+      // Admin can view all notifications
+      if (processedParams.view_all && (userRole === 'admin' || userRole === 'supervisor')) {
+        return notificationApi.get('/notifications', {
+          params: processedParams
+        });
+      }
+
+      // Regular users see only their notifications
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.get('/notifications', {
+        params: {
+          notifiable_id: userId,
+          ...processedParams
+        }
+      });
+    },
+    unread: () => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.get('/notifications/unread', {
+        params: { user_id: userId }
+      });
+    },
+    stats: (viewAll?: boolean) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      const userRole = user?.role;
+
+      // Admin can view all stats
+      if (viewAll && (userRole === 'admin' || userRole === 'supervisor')) {
+        return notificationApi.get('/notifications/stats', {
+          params: {
+            notifiable_type: 'user',
+            view_all: 1,
+            user_role: userRole
+          }
+        });
+      }
+
+      // Regular users see only their stats
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.get('/notifications/stats', {
+        params: {
+          notifiable_id: userId,
+          notifiable_type: 'user',
+          user_role: userRole
+        }
+      });
+    },
+    markAsRead: (id: string) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.post(`/notifications/${id}/read`, {
+        notifiable_id: userId,
+        notifiable_type: 'user'
+      });
+    },
+    markAsUnread: (id: string) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.post(`/notifications/${id}/unread`, {
+        notifiable_id: userId,
+        notifiable_type: 'user'
+      });
+    },
+    markMultipleAsRead: (notificationIds: string[]) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.post('/notifications/mark-read', {
+        user_id: userId,
+        notification_ids: notificationIds
+      });
+    },
+    delete: (id: string) => {
+      const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+      const userId = user?.id;
+      if (!userId) return Promise.reject(new Error('User ID not found'));
+
+      return notificationApi.delete(`/notifications/${id}`, {
+        params: { user_id: userId }
+      });
+    },
+    // Webhook for ticket assignment
+    notifyTicketAssigned: (payload: {
+      ticket_id: string;
+      ticket_number: string;
+      subject: string;
+      priority: string;
+      customer_name: string;
+      assigned_to_id: string;
+      assigned_to_name: string;
+      assigned_to_email: string;
+      assigned_by?: string;
+    }) =>
+      notificationApi.post('/webhooks/ticket-assigned', payload),
   },
 
   // Clients
@@ -259,6 +397,8 @@ export const api = {
   users: {
     list: (params?: any) =>
       userApi.get('/users', { params }),
+    listAssignable: () =>
+      userApi.get('/users/assignable'),
     get: (id: string) =>
       userApi.get(`/users/${id}`),
     create: (data: any) =>

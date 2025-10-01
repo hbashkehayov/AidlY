@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { format } from 'date-fns';
+import { useAuth } from '@/lib/auth';
 import {
   Users,
   Search,
@@ -55,8 +56,12 @@ const roleConfig = {
 
 export default function TeamPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+
+  // Check if current user is admin
+  const isAdmin = user?.role === 'admin';
 
   // Fetch all users
   const { data: usersData, isLoading } = useQuery({
@@ -96,7 +101,7 @@ export default function TeamPage() {
 
     const userTickets = ticketsData.filter((ticket: any) => ticket.assigned_agent_id === userId);
     const openTickets = userTickets.filter((t: any) =>
-      ['new', 'open', 'pending', 'on_hold'].includes(t.status)
+      ['open', 'pending'].includes(t.status)
     );
     const closedTickets = userTickets.filter((t: any) =>
       ['resolved', 'closed'].includes(t.status)
@@ -134,10 +139,12 @@ export default function TeamPage() {
             View and manage your support team members
           </p>
         </div>
-        <Button>
-          <Users className="mr-2 h-4 w-4" />
-          Add Team Member
-        </Button>
+        {isAdmin && (
+          <Button onClick={() => router.push('/settings?tab=users')}>
+            <Users className="mr-2 h-4 w-4" />
+            Add Team Member
+          </Button>
+        )}
       </div>
 
       {/* Stats Overview */}

@@ -34,9 +34,13 @@ class AuthMiddleware
         // For now, basic validation to extract user ID from token
         try {
             $payload = $this->decodeJwtPayload($token);
+
+            // Extract role from either payload.user.role or payload.role
+            $userRole = $payload['user']['role'] ?? $payload['role'] ?? 'user';
+
             $request->merge([
                 'user_id' => $payload['sub'] ?? null,
-                'user_role' => $payload['role'] ?? 'user'
+                'user_role' => $userRole
             ]);
 
             return $next($request);

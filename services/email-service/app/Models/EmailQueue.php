@@ -86,7 +86,8 @@ class EmailQueue extends Model
      */
     public function scopePending($query)
     {
-        return $query->where('is_processed', false);
+        return $query->where('is_processed', false)
+                     ->where('retry_count', '<', 5);
     }
 
     public function scopeProcessed($query)
@@ -171,7 +172,7 @@ class EmailQueue extends Model
     /**
      * Check if email should be retried
      */
-    public function shouldRetry(int $maxRetries = 3): bool
+    public function shouldRetry(int $maxRetries = 5): bool
     {
         return $this->retry_count < $maxRetries && !empty($this->error_message);
     }

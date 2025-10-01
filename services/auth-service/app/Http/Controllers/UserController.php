@@ -11,6 +11,24 @@ use Illuminate\Support\Str;
 class UserController extends Controller
 {
     /**
+     * Get list of users available for ticket assignment (all authenticated users can access)
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function listAssignable(Request $request)
+    {
+        $users = User::where('is_active', true)
+            ->orderBy('name', 'asc')
+            ->get(['id', 'name', 'email', 'role']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $users
+        ]);
+    }
+
+    /**
      * Get all users with pagination and filters
      *
      * @param Request $request

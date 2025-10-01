@@ -47,6 +47,11 @@ $router->group(['prefix' => 'api/v1/auth'], function () use ($router) {
     });
 });
 
+// User listing for assignment (all authenticated users)
+$router->group(['prefix' => 'api/v1/users', 'middleware' => 'jwt'], function () use ($router) {
+    $router->get('/assignable', 'UserController@listAssignable');
+});
+
 // User management routes (admin only)
 $router->group(['prefix' => 'api/v1/users', 'middleware' => ['jwt', 'role:admin,supervisor']], function () use ($router) {
     $router->get('/', 'UserController@index');

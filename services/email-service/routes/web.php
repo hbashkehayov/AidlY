@@ -87,6 +87,11 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         $router->get('/health', 'WebhookController@health');
         $router->post('/ticket/comment', 'WebhookController@handleTicketComment');
         $router->post('/ticket/status-change', 'WebhookController@handleTicketStatusChange');
+
+        // Instant email processing webhooks
+        $router->post('/email/incoming', 'WebhookEmailController@processIncoming');
+        $router->post('/email/trigger', 'WebhookEmailController@trigger');
+        $router->get('/email/health', 'WebhookEmailController@health');
     });
 
     // Gmail setup helper endpoints

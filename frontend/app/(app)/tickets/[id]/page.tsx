@@ -67,10 +67,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 const statusConfig = {
-  new: { label: 'New', color: 'bg-blue-500' },
   open: { label: 'Open', color: 'bg-yellow-500' },
   pending: { label: 'Pending', color: 'bg-orange-500' },
-  on_hold: { label: 'On Hold', color: 'bg-gray-500' },
   resolved: { label: 'Resolved', color: 'bg-green-500' },
   closed: { label: 'Closed', color: 'bg-gray-400' },
   cancelled: { label: 'Cancelled', color: 'bg-red-500' },
@@ -175,6 +173,8 @@ export default function TicketPage() {
   const [expandedEmails, setExpandedEmails] = useState<Record<string, boolean>>({});
   const [showEmailDetails, setShowEmailDetails] = useState<Record<string, boolean>>({});
   const [showExternalImages, setShowExternalImages] = useState<Record<string, boolean>>({});
+  const [dismissedForwardMessages, setDismissedForwardMessages] = useState<string[]>([]);
+  const [isClosingReply, setIsClosingReply] = useState(false);
 
   // Data fetching
   const { data: ticket, isLoading, error } = useQuery({
@@ -203,7 +203,7 @@ export default function TicketPage() {
         subject: ticket.subject || '',
         description: ticket.description || '',
         priority: ticket.priority || 'medium',
-        status: ticket.status || 'new',
+        status: ticket.status || 'open',
         category_id: ticket.category_id || '',
       });
       // Check if favorited (stored in localStorage for demo)
@@ -212,9 +212,24 @@ export default function TicketPage() {
     }
   }, [ticket, ticketId, editedTicket]);
 
+  // Extract forward messages from internal notes
+  const forwardMessages = ticket?.comments
+    ?.filter((comment: TicketComment) =>
+      comment.is_internal_note &&
+      comment.content?.startsWith('FORWARD_MESSAGE:')
+    )
+    .map((comment: TicketComment) => ({
+      message: comment.content.replace('FORWARD_MESSAGE:', '').trim(),
+      created_at: comment.created_at,
+      id: comment.id,
+      sender: comment.user || { name: 'Unknown User', email: '' }
+    }))
+    .filter((msg: any) => !dismissedForwardMessages.includes(msg.id)) || [];
+
+  // Fetch all users for assignment (not just agents)
   const { data: agents = [] } = useQuery({
-    queryKey: ['agents'],
-    queryFn: () => api.users.list({ role: 'agent' }).then(res => res.data?.data || []),
+    queryKey: ['users-for-assignment'],
+    queryFn: () => api.users.listAssignable().then(res => res.data?.data || []),
   });
 
   const { data: categories = [] } = useQuery({
@@ -282,6 +297,27 @@ export default function TicketPage() {
     },
   });
 
+  const handleCloseReply = () => {
+    setIsClosingReply(true);
+    setTimeout(() => {
+      setShowComposeReply(false);
+      setIsClosingReply(false);
+      setReplyEmail('');
+      setReplyName('');
+      setReplyContent('');
+    }, 200); // Match animation duration
+  };
+
+  const handleToggleReply = () => {
+    if (showComposeReply) {
+      // If closing, animate out
+      handleCloseReply();
+    } else {
+      // If opening, just toggle
+      setShowComposeReply(true);
+    }
+  };
+
   const handleReply = () => {
     if (!replyContent.trim()) return;
 
@@ -314,21 +350,57 @@ export default function TicketPage() {
     }
   };
 
-  const handleForwardTicket = () => {
+  const handleForwardTicket = async () => {
     if (!selectedAgent) return;
-    // Add internal note if message provided
-    if (forwardMessage) {
-      api.tickets.addComment(
-        ticketId as string,
-        `Ticket forwarded to agent with message: ${forwardMessage}`,
-        true
-      );
+
+    try {
+      const selectedAgentData = agents.find((agent: any) => agent.id === selectedAgent);
+      const selectedAgentName = selectedAgentData?.name || 'Unknown Agent';
+
+      // Add internal note if message provided
+      if (forwardMessage.trim()) {
+        await api.tickets.addComment(
+          ticketId as string,
+          `FORWARD_MESSAGE: ${forwardMessage}`,
+          true
+        );
+      }
+
+      // Update the ticket with new agent assignment
+      await api.tickets.update(ticketId as string, { assigned_agent_id: selectedAgent });
+
+      // Send notification to the assigned agent
+      try {
+        const notifResponse = await api.notifications.notifyTicketAssigned({
+          ticket_id: ticketId as string,
+          ticket_number: ticket.ticket_number || 'N/A',
+          subject: ticket.subject || 'No Subject',
+          priority: ticket.priority || 'medium',
+          customer_name: ticket.client?.name || 'Unknown',
+          assigned_to_id: selectedAgent,
+          assigned_to_name: selectedAgentData?.name || 'Unknown Agent',
+          assigned_to_email: selectedAgentData?.email || '',
+          assigned_by: user?.name || 'System'
+        });
+        console.log('Notification sent successfully:', notifResponse.data);
+      } catch (notifError: any) {
+        console.error('Failed to send notification:', notifError);
+        console.error('Notification error response:', notifError.response?.data);
+        console.error('Notification error status:', notifError.response?.status);
+        // Don't fail the whole operation if notification fails
+      }
+
+      // Refresh ticket data
+      queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+
+      setIsForwardDialogOpen(false);
+      setSelectedAgent('');
+      setForwardMessage('');
+      toast.success(`Ticket assigned to ${selectedAgentName}`);
+    } catch (error) {
+      console.error('Forward error:', error);
+      toast.error('Failed to forward ticket');
     }
-    // Update the ticket with new agent assignment
-    updateTicketMutation.mutate({ assigned_agent_id: selectedAgent });
-    setIsForwardDialogOpen(false);
-    setSelectedAgent('');
-    setForwardMessage('');
   };
 
   const handleDeleteTicket = () => {
@@ -448,7 +520,7 @@ export default function TicketPage() {
                   </div>
                 )}
                 <Button
-                  onClick={() => setShowComposeReply(!showComposeReply)}
+                  onClick={handleToggleReply}
                   variant={showComposeReply ? "default" : "outline"}
                   size="sm"
                   className={showComposeReply ? "bg-gray-900 hover:bg-gray-800 text-white" : ""}
@@ -557,6 +629,45 @@ export default function TicketPage() {
                   <span>Updated {ticket.updated_at ? formatDistanceToNow(new Date(ticket.updated_at)) : 'Unknown'} ago</span>
                 </div>
               </div>
+
+              {/* Forward Messages - Right below heading */}
+              {forwardMessages.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {forwardMessages.map((fwdMsg: any) => (
+                    <div
+                      key={fwdMsg.id}
+                      className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Forward className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-yellow-800">
+                                Forwarded by {fwdMsg.sender.name}
+                              </div>
+                              <div className="text-xs text-yellow-600">
+                                {formatDistanceToNow(new Date(fwdMsg.created_at), { addSuffix: true })}
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-yellow-700 hover:text-yellow-900 hover:bg-yellow-100"
+                              onClick={() => setDismissedForwardMessages(prev => [...prev, fwdMsg.id])}
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="text-sm text-yellow-700 whitespace-pre-wrap">
+                            {fwdMsg.message}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Conversation Area */}
@@ -724,15 +835,41 @@ export default function TicketPage() {
               {/* Comments - Chat-Style Message Thread */}
               {ticket.comments && ticket.comments.length > 0 && (
                 <div className="space-y-6">
-                  {ticket.comments.map((comment: TicketComment) => {
+                  {ticket.comments
+                    .filter((comment: TicketComment) =>
+                      // Filter out forward messages (they're shown above)
+                      !(comment.is_internal_note && comment.content?.startsWith('FORWARD_MESSAGE:'))
+                    )
+                    .map((comment: TicketComment) => {
                     const isExpanded = expandedEmails[comment.id] !== false;
-                    const showDetails = showEmailDetails[comment.id] || false;
+
                     // Determine sender info based on comment type
-                    const isFromAgent = (comment.user_id && comment.user_id.trim() !== '') || comment.is_internal_note;
-                    const senderName = isFromAgent
-                      ? (comment.user?.name || 'Agent')
-                      : (comment.client?.name || clientInfo.name || comment.from_address || 'Client');
-                    const initials = senderName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
+                    // A comment is from an agent if it has a user_id (and user object)
+                    const isFromAgent = !!(comment.user_id && comment.user);
+
+                    // Get the sender's name
+                    let senderName = 'Unknown';
+                    let senderEmail = '';
+
+                    if (isFromAgent && comment.user) {
+                      // This is from an agent/user
+                      senderName = comment.user.name || 'Agent';
+                      senderEmail = comment.user.email || '';
+                    } else if (comment.client) {
+                      // This is from a client (has client object)
+                      senderName = comment.client.name || 'Client';
+                      senderEmail = comment.client.email || '';
+                    } else if (comment.from_address) {
+                      // Fallback to email metadata if available
+                      senderName = comment.from_address.split('@')[0] || 'Client';
+                      senderEmail = comment.from_address;
+                    } else {
+                      // Last resort - use ticket's client info
+                      senderName = clientInfo.name || 'Client';
+                      senderEmail = clientInfo.email || '';
+                    }
+
+                    const initials = senderName.split(' ').map((n: any) => n[0]).join('').toUpperCase().slice(0, 2);
                     const displayContent = comment.body_html || comment.content;
 
                     return (
@@ -740,13 +877,13 @@ export default function TicketPage() {
                         key={comment.id}
                         className={cn(
                           "flex gap-3",
-                          isFromAgent ? "flex-row" : "flex-row-reverse"
+                          isFromAgent ? "flex-row-reverse" : "flex-row"
                         )}
                       >
                         {/* Avatar */}
                         <Avatar className={cn(
                           "h-10 w-10 flex-shrink-0",
-                          !isFromAgent && "ring-2 ring-blue-100"
+                          isFromAgent && "ring-2 ring-indigo-100"
                         )}>
                           <AvatarFallback
                             className={cn(
@@ -765,12 +902,12 @@ export default function TicketPage() {
                         {/* Message Bubble */}
                         <div className={cn(
                           "flex-1 max-w-[85%]",
-                          isFromAgent ? "mr-auto" : "ml-auto"
+                          isFromAgent ? "ml-auto" : "mr-auto"
                         )}>
                           {/* Sender Info Header */}
                           <div className={cn(
                             "flex items-center gap-2 mb-2",
-                            isFromAgent ? "flex-row" : "flex-row-reverse"
+                            isFromAgent ? "flex-row-reverse" : "flex-row"
                           )}>
                             <span className={cn(
                               "font-semibold text-sm",
@@ -793,8 +930,13 @@ export default function TicketPage() {
                                     : "bg-blue-50 text-blue-700 border-blue-200"
                               )}
                             >
-                              {comment.is_internal_note ? '🔒 Internal Note' : (comment.user_id && comment.user_id.trim() !== '') ? '👤 Agent' : '💬 Client'}
+                              {comment.is_internal_note ? '🔒 Internal Note' : isFromAgent ? '👤 Agent' : '💬 Client'}
                             </Badge>
+                            {senderEmail && (
+                              <span className="text-xs text-gray-500">
+                                {senderEmail}
+                              </span>
+                            )}
                             <span className="text-xs text-gray-500">
                               {format(new Date(comment.created_at), 'MMM d, h:mm a')}
                             </span>
@@ -952,25 +1094,16 @@ export default function TicketPage() {
 
             {/* Reply Area */}
             {showComposeReply && (
-              <div className="border-t border-gray-200 p-6 bg-gray-50">
+              <div className={cn(
+                "border-t border-gray-200 p-6 bg-gray-50 transition-all duration-200",
+                isClosingReply
+                  ? "animate-out slide-out-to-bottom-4 fade-out"
+                  : "animate-in slide-in-from-bottom-4 fade-in"
+              )}>
                 {isAuthenticated ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h4 className="font-medium text-gray-900">Compose Reply</h4>
-                      <div className="flex items-center gap-2">
-                        {user?.role !== 'client' && (
-                          <>
-                            <Label htmlFor="internal-note" className="text-sm">
-                              Internal Note
-                            </Label>
-                            <Switch
-                              id="internal-note"
-                              checked={isInternalNote}
-                              onCheckedChange={setIsInternalNote}
-                            />
-                          </>
-                        )}
-                      </div>
                     </div>
                     <RichTextEditor
                       content={replyContent}
@@ -988,7 +1121,7 @@ export default function TicketPage() {
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={() => setShowComposeReply(false)}
+                          onClick={handleCloseReply}
                         >
                           Cancel
                         </Button>
@@ -1053,12 +1186,7 @@ export default function TicketPage() {
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={() => {
-                            setShowComposeReply(false);
-                            setReplyEmail('');
-                            setReplyName('');
-                            setReplyContent('');
-                          }}
+                          onClick={handleCloseReply}
                         >
                           Cancel
                         </Button>
@@ -1085,7 +1213,7 @@ export default function TicketPage() {
               <div>
                 <Label className="text-sm font-medium text-gray-700">Status</Label>
                 <Select
-                  value={ticket.status || 'new'}
+                  value={ticket.status || 'open'}
                   onValueChange={(value) => updateTicketMutation.mutate({ status: value })}
                   disabled={updateTicketMutation.isPending}
                 >
@@ -1093,10 +1221,8 @@ export default function TicketPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="new">New</SelectItem>
                     <SelectItem value="open">Open</SelectItem>
                     <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="on_hold">On Hold</SelectItem>
                     <SelectItem value="resolved">Resolved</SelectItem>
                     <SelectItem value="closed">Closed</SelectItem>
                   </SelectContent>
@@ -1143,34 +1269,21 @@ export default function TicketPage() {
                 </Select>
               </div>
 
-              {/* Assigned Agent */}
+              {/* Assigned Agent - Read Only */}
               <div>
-                <Label className="text-sm font-medium text-gray-700">Assigned Agent</Label>
-                <Select
-                  value={ticket.assigned_agent_id || "unassigned"}
-                  onValueChange={(value) => {
-                    if (value === "unassigned") {
-                      // Use update endpoint to set assigned_agent_id to null
-                      updateTicketMutation.mutate({ assigned_agent_id: null });
-                    } else {
-                      // Use update endpoint to set the agent
-                      updateTicketMutation.mutate({ assigned_agent_id: value });
-                    }
-                  }}
-                  disabled={updateTicketMutation.isPending}
-                >
-                  <SelectTrigger className="w-full mt-1">
-                    <SelectValue placeholder="Unassigned" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                    {agents.map((agent: any) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-sm font-medium text-gray-700">Assigned To</Label>
+                <div className="mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-700">
+                  {ticket.assigned_agent_id ? (
+                    <div className="flex items-center gap-2">
+                      <User className="h-4 w-4 text-gray-500" />
+                      <span>
+                        {agents.find((agent: any) => agent.id === ticket.assigned_agent_id)?.name || 'Unknown Agent'}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-gray-500 italic">Unassigned</span>
+                  )}
+                </div>
               </div>
 
               {/* Quick Status Updates */}
@@ -1271,10 +1384,8 @@ export default function TicketPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="new">New</SelectItem>
                         <SelectItem value="open">Open</SelectItem>
                         <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="on_hold">On Hold</SelectItem>
                         <SelectItem value="resolved">Resolved</SelectItem>
                         <SelectItem value="closed">Closed</SelectItem>
                       </SelectContent>
@@ -1367,31 +1478,39 @@ export default function TicketPage() {
             <DialogHeader>
               <DialogTitle>Forward Ticket</DialogTitle>
               <DialogDescription>
-                Select an agent to forward this ticket to and optionally add a message.
+                Assign this ticket to a user and optionally add a message that will appear above the ticket.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <Label>Agent</Label>
+                <Label>Assign To</Label>
                 <Select value={selectedAgent} onValueChange={setSelectedAgent}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select an agent" />
+                    <SelectValue placeholder="Select a user to assign" />
                   </SelectTrigger>
                   <SelectContent>
-                    {agents.map((agent: any) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name} ({agent.email})
-                      </SelectItem>
-                    ))}
+                    {agents
+                      .filter((agent: any) => agent.id !== ticket.assigned_agent_id)
+                      .map((agent: any) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name} ({agent.email}) - {agent.role}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
+                {ticket.assigned_agent_id && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Currently assigned to: {agents.find((agent: any) => agent.id === ticket.assigned_agent_id)?.name}
+                  </p>
+                )}
               </div>
               <div>
                 <Label>Message (Optional)</Label>
                 <Textarea
                   value={forwardMessage}
                   onChange={(e) => setForwardMessage(e.target.value)}
-                  placeholder="Add a message for the agent..."
+                  placeholder="Add a message that will appear in a yellow box above the ticket..."
+                  rows={4}
                 />
               </div>
             </div>

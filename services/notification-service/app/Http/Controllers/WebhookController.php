@@ -169,17 +169,23 @@ class WebhookController extends Controller
             $this->queueNotification([
                 'user_id' => $ticketData['assigned_to_id'],
                 'recipient_email' => $ticketData['assigned_to_email'],
-                'type' => 'email',
+                'type' => 'in_app',
                 'event' => 'ticket_assigned',
                 'template' => 'ticket_assigned',
-                'subject' => "Ticket Assigned: {$ticketData['subject']}",
+                'subject' => "Ticket {$ticketData['ticket_number']} assigned to you",
+                'message' => "Ticket #{$ticketData['ticket_number']}: {$ticketData['subject']} has been assigned to you by {$ticketData['assigned_by']}",
+                'priority' => $ticketData['priority'],
                 'data' => [
+                    'ticket_id' => $ticketData['ticket_id'],
                     'agent_name' => $ticketData['assigned_to_name'],
                     'ticket_number' => $ticketData['ticket_number'],
                     'ticket_subject' => $ticketData['subject'],
+                    'subject' => $ticketData['subject'], // Add this for template compatibility
                     'customer_name' => $ticketData['customer_name'],
                     'ticket_priority' => $ticketData['priority'],
-                    'assigned_by' => $ticketData['assigned_by'] ?? 'System'
+                    'assigned_by' => $ticketData['assigned_by'] ?? 'System',
+                    'action_url' => "/tickets/{$ticketData['ticket_id']}",
+                    'action_text' => 'View Ticket'
                 ]
             ]);
 
@@ -249,16 +255,21 @@ class WebhookController extends Controller
                 $this->queueNotification([
                     'user_id' => $commentData['assigned_agent_id'],
                     'recipient_email' => $commentData['assigned_agent_email'],
-                    'type' => 'email',
+                    'type' => 'in_app',
                     'event' => 'comment_added',
                     'template' => 'comment_added_agent',
-                    'subject' => "Customer Reply: {$commentData['ticket_subject']}",
+                    'subject' => "New customer reply",
+                    'priority' => 'normal',
                     'data' => [
+                        'ticket_id' => $commentData['ticket_id'],
+                        'comment_id' => $commentData['comment_id'],
                         'agent_name' => 'Agent',
                         'ticket_number' => $commentData['ticket_number'],
                         'ticket_subject' => $commentData['ticket_subject'],
-                        'comment_text' => $commentData['comment_text'],
-                        'customer_name' => $commentData['author_name']
+                        'comment_text' => substr($commentData['comment_text'], 0, 150) . (strlen($commentData['comment_text']) > 150 ? '...' : ''),
+                        'customer_name' => $commentData['author_name'],
+                        'action_url' => "/tickets/{$commentData['ticket_id']}",
+                        'action_text' => 'View Reply'
                     ]
                 ]);
             }
@@ -344,23 +355,52 @@ class WebhookController extends Controller
     private function queueNotification($data)
     {
         $template = $this->getTemplate($data['template'] ?? $data['event']);
+        $notificationId = \Illuminate\Support\Str::uuid();
 
-        $notificationData = [
-            'id' => \Illuminate\Support\Str::uuid(),
+        // Create in-app notification for real-time display
+        $inAppNotification = [
+            'id' => $notificationId,
             'notifiable_type' => 'user',
             'notifiable_id' => $data['user_id'],
             'type' => $data['event'],
-            'channel' => $data['type'],
+            'channel' => 'in_app',
+            'ticket_id' => $data['data']['ticket_id'] ?? null,
+            'comment_id' => $data['data']['comment_id'] ?? null,
+            'triggered_by' => $data['data']['triggered_by'] ?? null,
             'title' => $this->processTemplate($data['subject'], $data['data'] ?? []),
-            'message' => $this->processTemplate($template['message_template'] ?? $data['subject'], $data['data'] ?? []),
+            'message' => isset($data['message'])
+                ? $data['message']
+                : $this->processTemplate($template['message_template'] ?? $data['subject'], $data['data'] ?? []),
             'data' => json_encode($data['data'] ?? []),
-            'priority' => $this->mapPriorityToInt($data['priority'] ?? 'normal'),
+            'action_url' => $data['data']['action_url'] ?? null,
+            'action_text' => $data['data']['action_text'] ?? 'View',
+            'priority' => $this->mapPriority($data['priority'] ?? 'normal'),
             'status' => 'pending',
-            'scheduled_at' => \Carbon\Carbon::now(),
-            'created_at' => \Carbon\Carbon::now()
+            'created_at' => \Carbon\Carbon::now(),
+            'updated_at' => \Carbon\Carbon::now()
         ];
 
-        DB::table('notification_queue')->insert($notificationData);
+        DB::table('notifications')->insert($inAppNotification);
+
+        // Also queue for email if specified
+        if (($data['type'] ?? 'email') === 'email') {
+            $emailNotification = [
+                'id' => \Illuminate\Support\Str::uuid(),
+                'notifiable_type' => 'user',
+                'notifiable_id' => $data['user_id'],
+                'type' => $data['event'],
+                'channel' => 'email',
+                'title' => $this->processTemplate($data['subject'], $data['data'] ?? []),
+                'message' => $this->processTemplate($template['message_template'] ?? $data['subject'], $data['data'] ?? []),
+                'data' => json_encode($data['data'] ?? []),
+                'priority' => $this->mapPriorityToInt($data['priority'] ?? 'normal'),
+                'status' => 'pending',
+                'scheduled_at' => \Carbon\Carbon::now(),
+                'created_at' => \Carbon\Carbon::now()
+            ];
+
+            DB::table('notification_queue')->insert($emailNotification);
+        }
     }
 
     /**
@@ -467,6 +507,17 @@ class WebhookController extends Controller
             'high' => 10,
             'urgent' => 20,
             default => 5
+        };
+    }
+
+    /**
+     * Map priority string to string format
+     */
+    private function mapPriority($priority): string
+    {
+        return match($priority) {
+            'low', 'normal', 'high', 'urgent' => $priority,
+            default => 'normal'
         };
     }
 }

@@ -295,7 +295,17 @@ class SmtpService
         // Headers
         if (!empty($emailData['headers'])) {
             foreach ($emailData['headers'] as $header => $value) {
-                $message->getHeaders()->addTextHeader($header, $value);
+                if (!empty($value)) {
+                    // Use addIdHeader for email threading headers (Message-ID, In-Reply-To, References)
+                    $headerLower = strtolower($header);
+                    if (in_array($headerLower, ['message-id', 'in-reply-to', 'references'])) {
+                        // Strip angle brackets - Symfony adds them automatically
+                        $cleanValue = trim($value, '<>');
+                        $message->getHeaders()->addIdHeader($header, $cleanValue);
+                    } else {
+                        $message->getHeaders()->addTextHeader($header, $value);
+                    }
+                }
             }
         }
 
@@ -304,13 +314,17 @@ class SmtpService
             $message->replyTo($emailData['reply_to']);
         }
 
-        // Message ID for threading
+        // Message ID for threading (deprecated - now handled in headers array above)
         if (!empty($emailData['in_reply_to'])) {
-            $message->getHeaders()->addTextHeader('In-Reply-To', $emailData['in_reply_to']);
+            // Strip angle brackets - Symfony adds them automatically
+            $cleanInReplyTo = trim($emailData['in_reply_to'], '<>');
+            $message->getHeaders()->addIdHeader('In-Reply-To', $cleanInReplyTo);
         }
 
         if (!empty($emailData['references'])) {
-            $message->getHeaders()->addTextHeader('References', $emailData['references']);
+            // Strip angle brackets - Symfony adds them automatically
+            $cleanReferences = trim($emailData['references'], '<>');
+            $message->getHeaders()->addIdHeader('References', $cleanReferences);
         }
 
         // Attachments

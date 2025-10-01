@@ -16,14 +16,16 @@ class NotificationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'notifiable_id' => 'required|uuid',
-                'notifiable_type' => 'required|in:user,client',
+                'notifiable_id' => 'sometimes|uuid',
+                'notifiable_type' => 'sometimes|in:user,client',
                 'status' => 'sometimes|in:pending,sent,delivered,read,failed',
                 'type' => 'sometimes|string',
                 'channel' => 'sometimes|string',
                 'limit' => 'sometimes|integer|min:1|max:100',
                 'offset' => 'sometimes|integer|min:0',
-                'unread_only' => 'sometimes|boolean'
+                'unread_only' => 'sometimes|in:0,1,true,false',
+                'view_all' => 'sometimes|in:0,1,true,false', // For admin to view all
+                'user_role' => 'sometimes|string' // User role for authorization
             ]);
 
             if ($validator->fails()) {
@@ -34,46 +36,100 @@ class NotificationController extends Controller
             }
 
             $notifiableId = $request->get('notifiable_id');
-            $notifiableType = $request->get('notifiable_type');
+            $notifiableType = $request->get('notifiable_type', 'user');
             $limit = $request->get('limit', 20);
             $offset = $request->get('offset', 0);
+            $viewAll = in_array($request->get('view_all'), [1, '1', 'true', true], true);
+            $userRole = $request->get('user_role');
 
-            $query = DB::table('notifications')
-                ->where('notifiable_id', $notifiableId)
-                ->where('notifiable_type', $notifiableType);
+            // Log for debugging
+            \Log::info('Notification request', [
+                'view_all' => $viewAll,
+                'user_role' => $userRole,
+                'notifiable_id' => $notifiableId
+            ]);
+
+            // Check if view_all is requested without proper authorization
+            if ($viewAll && !in_array($userRole, ['admin', 'supervisor'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Unauthorized: Only admin/supervisor can view all notifications',
+                    'debug' => [
+                        'user_role' => $userRole,
+                        'view_all' => $viewAll
+                    ]
+                ], 403);
+            }
+
+            // Admin/Supervisor can view all notifications
+            if ($viewAll && in_array($userRole, ['admin', 'supervisor'], true)) {
+                $query = DB::table('notifications')
+                    ->leftJoin('users', 'notifications.notifiable_id', '=', 'users.id')
+                    ->select('notifications.*', 'users.name as user_name', 'users.email as user_email')
+                    ->where('notifiable_type', $notifiableType);
+            } else {
+                // Regular users (agents) see only their notifications
+                if (!$notifiableId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'notifiable_id is required for non-admin users',
+                        'debug' => [
+                            'user_role' => $userRole,
+                            'has_notifiable_id' => $notifiableId !== null
+                        ]
+                    ], 400);
+                }
+
+                $query = DB::table('notifications')
+                    ->leftJoin('users', 'notifications.notifiable_id', '=', 'users.id')
+                    ->select('notifications.*', 'users.name as user_name', 'users.email as user_email')
+                    ->where('notifications.notifiable_id', $notifiableId)
+                    ->where('notifications.notifiable_type', $notifiableType);
+            }
 
             // Apply filters
             if ($request->has('status')) {
-                $query->where('status', $request->get('status'));
+                $query->where('notifications.status', $request->get('status'));
             }
 
             if ($request->has('type')) {
-                $query->where('type', $request->get('type'));
+                $query->where('notifications.type', $request->get('type'));
             }
 
             if ($request->has('channel')) {
-                $query->where('channel', $request->get('channel'));
+                $query->where('notifications.channel', $request->get('channel'));
             }
 
-            if ($request->get('unread_only')) {
-                $query->where('read_at', null);
+            if ($request->has('unread_only') && in_array($request->get('unread_only'), [1, '1', 'true', true], true)) {
+                $query->whereNull('notifications.read_at');
             }
 
             $notifications = $query
-                ->orderBy('created_at', 'desc')
+                ->orderBy('notifications.created_at', 'desc')
                 ->limit($limit)
                 ->offset($offset)
                 ->get();
 
-            $total = DB::table('notifications')
-                ->where('notifiable_id', $notifiableId)
-                ->where('notifiable_type', $notifiableType)
-                ->count();
-            $unread = DB::table('notifications')
-                ->where('notifiable_id', $notifiableId)
-                ->where('notifiable_type', $notifiableType)
-                ->whereNull('read_at')
-                ->count();
+            // Count totals based on same query criteria
+            if ($viewAll && in_array($userRole, ['admin', 'supervisor'], true)) {
+                $total = DB::table('notifications')
+                    ->where('notifiable_type', $notifiableType)
+                    ->count();
+                $unread = DB::table('notifications')
+                    ->where('notifiable_type', $notifiableType)
+                    ->whereNull('read_at')
+                    ->count();
+            } else {
+                $total = DB::table('notifications')
+                    ->where('notifiable_id', $notifiableId)
+                    ->where('notifiable_type', $notifiableType)
+                    ->count();
+                $unread = DB::table('notifications')
+                    ->where('notifiable_id', $notifiableId)
+                    ->where('notifiable_type', $notifiableType)
+                    ->whereNull('read_at')
+                    ->count();
+            }
 
             return response()->json([
                 'success' => true,
@@ -82,7 +138,8 @@ class NotificationController extends Controller
                     'total' => $total,
                     'unread' => $unread,
                     'limit' => $limit,
-                    'offset' => $offset
+                    'offset' => $offset,
+                    'view_mode' => $viewAll ? 'all' : 'personal'
                 ]
             ]);
 
@@ -110,7 +167,8 @@ class NotificationController extends Controller
             }
 
             $notifications = DB::table('notifications')
-                ->where('user_id', $userId)
+                ->where('notifiable_id', $userId)
+                ->where('notifiable_type', 'user')
                 ->whereNull('read_at')
                 ->orderBy('created_at', 'desc')
                 ->limit(50)
@@ -138,41 +196,72 @@ class NotificationController extends Controller
         try {
             $notifiableId = $request->get('notifiable_id');
             $notifiableType = $request->get('notifiable_type', 'user');
+            $viewAll = in_array($request->get('view_all'), [1, '1', 'true', true], true);
+            $userRole = $request->get('user_role');
 
-            if (!$notifiableId) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Notifiable ID required'
-                ], 400);
+            // Admin/Supervisor can view all stats
+            if ($viewAll && in_array($userRole, ['admin', 'supervisor'], true)) {
+                $stats = [
+                    'total' => DB::table('notifications')
+                        ->where('notifiable_type', $notifiableType)
+                        ->count(),
+                    'unread' => DB::table('notifications')
+                        ->where('notifiable_type', $notifiableType)
+                        ->whereNull('read_at')
+                        ->count(),
+                    'read' => DB::table('notifications')
+                        ->where('notifiable_type', $notifiableType)
+                        ->whereNotNull('read_at')
+                        ->count(),
+                    'by_type' => DB::table('notifications')
+                        ->select('type', DB::raw('COUNT(*) as count'))
+                        ->where('notifiable_type', $notifiableType)
+                        ->groupBy('type')
+                        ->pluck('count', 'type'),
+                    'recent_activity' => DB::table('notifications')
+                        ->where('notifiable_type', $notifiableType)
+                        ->where('created_at', '>', \Carbon\Carbon::now()->subDays(7))
+                        ->count(),
+                    'view_mode' => 'all'
+                ];
+            } else {
+                // Regular users (agents) see only their stats
+                if (!$notifiableId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'Notifiable ID required'
+                    ], 400);
+                }
+
+                $stats = [
+                    'total' => DB::table('notifications')
+                        ->where('notifiable_id', $notifiableId)
+                        ->where('notifiable_type', $notifiableType)
+                        ->count(),
+                    'unread' => DB::table('notifications')
+                        ->where('notifiable_id', $notifiableId)
+                        ->where('notifiable_type', $notifiableType)
+                        ->whereNull('read_at')
+                        ->count(),
+                    'read' => DB::table('notifications')
+                        ->where('notifiable_id', $notifiableId)
+                        ->where('notifiable_type', $notifiableType)
+                        ->whereNotNull('read_at')
+                        ->count(),
+                    'by_type' => DB::table('notifications')
+                        ->select('type', DB::raw('COUNT(*) as count'))
+                        ->where('notifiable_id', $notifiableId)
+                        ->where('notifiable_type', $notifiableType)
+                        ->groupBy('type')
+                        ->pluck('count', 'type'),
+                    'recent_activity' => DB::table('notifications')
+                        ->where('notifiable_id', $notifiableId)
+                        ->where('notifiable_type', $notifiableType)
+                        ->where('created_at', '>', \Carbon\Carbon::now()->subDays(7))
+                        ->count(),
+                    'view_mode' => 'personal'
+                ];
             }
-
-            $stats = [
-                'total' => DB::table('notifications')
-                    ->where('notifiable_id', $notifiableId)
-                    ->where('notifiable_type', $notifiableType)
-                    ->count(),
-                'unread' => DB::table('notifications')
-                    ->where('notifiable_id', $notifiableId)
-                    ->where('notifiable_type', $notifiableType)
-                    ->whereNull('read_at')
-                    ->count(),
-                'read' => DB::table('notifications')
-                    ->where('notifiable_id', $notifiableId)
-                    ->where('notifiable_type', $notifiableType)
-                    ->whereNotNull('read_at')
-                    ->count(),
-                'by_type' => DB::table('notifications')
-                    ->select('type', DB::raw('COUNT(*) as count'))
-                    ->where('notifiable_id', $notifiableId)
-                    ->where('notifiable_type', $notifiableType)
-                    ->groupBy('type')
-                    ->pluck('count', 'type'),
-                'recent_activity' => DB::table('notifications')
-                    ->where('notifiable_id', $notifiableId)
-                    ->where('notifiable_type', $notifiableType)
-                    ->where('created_at', '>', \Carbon\Carbon::now()->subDays(7))
-                    ->count()
-            ];
 
             return response()->json([
                 'success' => true,
@@ -370,7 +459,7 @@ class NotificationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'user_id' => 'required|uuid',
-                'notification_ids' => 'required|array|max:100',
+                'notification_ids' => 'sometimes|array|max:100',
                 'notification_ids.*' => 'uuid'
             ]);
 
@@ -381,16 +470,66 @@ class NotificationController extends Controller
                 ], 422);
             }
 
-            $updated = DB::table('notifications')
-                ->where('user_id', $request->get('user_id'))
-                ->whereIn('id', $request->get('notification_ids'))
-                ->whereNull('read_at')
-                ->update(['read_at' => \Carbon\Carbon::now()]);
+            $userId = $request->get('user_id');
+            $notificationIds = $request->get('notification_ids', []);
+
+            $query = DB::table('notifications')
+                ->where('notifiable_id', $userId)
+                ->where('notifiable_type', 'user')
+                ->whereNull('read_at');
+
+            // If specific IDs provided, only mark those
+            // Otherwise mark ALL unread for this user
+            if (!empty($notificationIds)) {
+                $query->whereIn('id', $notificationIds);
+            }
+
+            $updated = $query->update(['read_at' => \Carbon\Carbon::now()]);
 
             return response()->json([
                 'success' => true,
                 'message' => "Marked {$updated} notifications as read",
                 'updated_count' => $updated
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Mark notification as unread
+     */
+    public function markAsUnread(Request $request, $id): JsonResponse
+    {
+        try {
+            if (!$request->get('notifiable_id')) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Notifiable ID required'
+                ], 400);
+            }
+
+            $updated = DB::table('notifications')
+                ->where('id', $id)
+                ->where('notifiable_id', $request->get('notifiable_id'))
+                ->where('notifiable_type', $request->get('notifiable_type', 'user'))
+                ->whereNotNull('read_at')
+                ->update(['read_at' => null]);
+
+            if ($updated === 0) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Notification not found or already unread'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notification marked as unread'
             ]);
 
         } catch (\Exception $e) {
@@ -418,7 +557,8 @@ class NotificationController extends Controller
 
             $deleted = DB::table('notifications')
                 ->where('id', $id)
-                ->where('user_id', $userId)
+                ->where('notifiable_id', $userId)
+                ->where('notifiable_type', 'user')
                 ->delete();
 
             if ($deleted === 0) {

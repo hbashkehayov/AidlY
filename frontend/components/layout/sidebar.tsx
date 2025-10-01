@@ -11,8 +11,6 @@ import {
   HelpCircle,
   BarChart3,
   Menu,
-  Search,
-  Bell,
   User,
   LogOut,
   Handshake,
@@ -28,12 +26,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Input } from '@/components/ui/input';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { useSidebar } from '@/lib/sidebar-context';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useNotificationCounts } from '@/hooks/use-notifications';
+import { NotificationBell } from '@/components/notifications/notification-bell';
 
 const getNavigation = (notificationCounts: any, userRole?: string) => [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -100,26 +98,9 @@ export function Sidebar() {
             </Link>
           </div>
 
-          {/* Search Bar */}
-          <div className="flex-1 max-w-xl mx-4 hidden md:block">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search tickets, customers, or articles..."
-                className="pl-10 pr-4"
-              />
-            </div>
-          </div>
-
           {/* Right Navigation */}
           <div className="flex items-center space-x-4">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center">
-                5
-              </span>
-            </Button>
+            <NotificationBell />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

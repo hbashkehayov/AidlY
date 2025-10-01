@@ -40,6 +40,7 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         $router->get('/unread', ['middleware' => 'auth', 'uses' => 'NotificationController@unread']);
         $router->get('/stats', ['middleware' => 'auth', 'uses' => 'NotificationController@stats']);
         $router->post('/{id}/read', ['middleware' => 'auth', 'uses' => 'NotificationController@markAsRead']);
+        $router->post('/{id}/unread', ['middleware' => 'auth', 'uses' => 'NotificationController@markAsUnread']);
         $router->post('/mark-read', ['middleware' => 'auth', 'uses' => 'NotificationController@markMultipleAsRead']);
         $router->delete('/{id}', ['middleware' => 'auth', 'uses' => 'NotificationController@destroy']);
     });

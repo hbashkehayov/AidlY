@@ -13,7 +13,7 @@ class Kernel extends ConsoleKernel
      * @var array
      */
     protected $commands = [
-        //
+        Commands\AutoCloseResolvedTickets::class,
     ];
 
     /**
@@ -24,6 +24,10 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        //
+        // Run auto-close command every hour
+        $schedule->command('tickets:auto-close-resolved')
+            ->hourly()
+            ->withoutOverlapping()
+            ->runInBackground();
     }
 }

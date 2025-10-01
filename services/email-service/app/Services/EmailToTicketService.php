@@ -177,21 +177,42 @@ class EmailToTicketService
         foreach ($messageIds as $messageId) {
             if (!$messageId) continue;
 
+            // Clean up message ID (remove < > brackets if present)
+            $cleanMessageId = trim($messageId, '<>');
+
             try {
                 $request = Http::when($this->apiKey, function ($http) {
                     return $http->withHeaders(['Authorization' => 'Bearer ' . $this->apiKey]);
                 });
 
-                $response = $request->get("{$this->ticketServiceUrl}/api/v1/tickets/by-message-id", [
-                    'message_id' => $messageId
+                // First, try to find by original incoming message ID
+                $response = $request->get("{$this->ticketServiceUrl}/api/v1/public/tickets/by-message-id", [
+                    'message_id' => $cleanMessageId
                 ]);
 
                 if ($response->successful() && $response->json('success')) {
+                    Log::info("Found ticket by incoming message ID", [
+                        'message_id' => $cleanMessageId,
+                        'ticket_id' => $response->json('data.id')
+                    ]);
+                    return $response->json('data');
+                }
+
+                // Second, try to find by sent message ID (replies from agents)
+                $response = $request->get("{$this->ticketServiceUrl}/api/v1/public/tickets/by-sent-message-id", [
+                    'message_id' => $cleanMessageId
+                ]);
+
+                if ($response->successful() && $response->json('success')) {
+                    Log::info("Found ticket by sent message ID (agent reply)", [
+                        'message_id' => $cleanMessageId,
+                        'ticket_id' => $response->json('data.id')
+                    ]);
                     return $response->json('data');
                 }
             } catch (\Exception $e) {
                 Log::warning("Failed to find ticket by message ID", [
-                    'message_id' => $messageId,
+                    'message_id' => $cleanMessageId,
                     'error' => $e->getMessage(),
                 ]);
             }
@@ -206,9 +227,13 @@ class EmailToTicketService
     protected function findTicketByNumber(string $ticketNumber): ?array
     {
         try {
-            $response = Http::get("{$this->ticketServiceUrl}/api/v1/tickets/by-number/{$ticketNumber}");
+            $response = Http::get("{$this->ticketServiceUrl}/api/v1/public/tickets/by-number/{$ticketNumber}");
 
             if ($response->successful() && $response->json('success')) {
+                Log::info("Matched existing ticket by number", [
+                    'ticket_number' => $ticketNumber,
+                    'ticket_id' => $response->json('data.id')
+                ]);
                 return $response->json('data');
             }
         } catch (\Exception $e) {
@@ -394,7 +419,7 @@ class EmailToTicketService
             ],
         ];
 
-        $response = Http::post("{$this->ticketServiceUrl}/api/v1/tickets/{$ticketId}/comments", $commentData);
+        $response = Http::post("{$this->ticketServiceUrl}/api/v1/public/tickets/{$ticketId}/comments", $commentData);
 
         if (!$response->successful()) {
             throw new \Exception("Failed to add comment to ticket: " . $response->body());

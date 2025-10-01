@@ -37,8 +37,8 @@ $router->get('/health', function () use ($router) {
 // API v1 routes
 $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
-    // Public routes (no authentication required)
-    $router->group(['prefix' => 'public'], function () use ($router) {
+    // Public routes (no authentication required, but authentication is respected if provided)
+    $router->group(['prefix' => 'public', 'middleware' => 'auth.optional'], function () use ($router) {
 
         // Categories (public read-only access)
         $router->get('categories', 'CategoryController@index');
@@ -56,6 +56,12 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
         // Get ticket by message ID (for email threading) - MUST come before {id} route
         $router->get('tickets/by-message-id', 'TicketController@getByMessageId');
+
+        // Get ticket by sent message ID (for reply threading) - MUST come before {id} route
+        $router->get('tickets/by-sent-message-id', 'TicketController@getBySentMessageId');
+
+        // Store sent message ID for email threading
+        $router->post('tickets/{id}/message-id', 'TicketController@storeMessageId');
 
         // Get specific ticket by ID
         $router->get('tickets/{id}', 'TicketController@show');

@@ -81,6 +81,7 @@ $app->middleware([
 
 $app->routeMiddleware([
     'auth' => App\Http\Middleware\JwtMiddleware::class,
+    'auth.optional' => App\Http\Middleware\OptionalJwtMiddleware::class,
     'role' => App\Http\Middleware\RoleMiddleware::class,
 ]);
 

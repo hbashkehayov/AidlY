@@ -77,6 +77,7 @@ export function RichTextEditor({
         class: cn(
           'prose prose-sm dark:prose-invert max-w-none p-4 focus:outline-none',
           'min-h-[200px] max-h-[500px] overflow-y-auto',
+          'transition-all duration-300 ease-in-out',
           className
         ),
         style: {
@@ -100,7 +101,10 @@ export function RichTextEditor({
   };
 
   return (
-    <div className={cn('border rounded-lg', isExpanded && 'fixed inset-4 z-50 bg-background')}>
+    <div className={cn(
+      'border rounded-lg transition-all duration-300 ease-in-out',
+      isExpanded && 'fixed inset-4 z-50 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200'
+    )}>
       {/* Toolbar */}
       <div className="border-b p-2 flex items-center justify-between flex-wrap gap-2 bg-muted/50">
         <div className="flex items-center gap-1">
