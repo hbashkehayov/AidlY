@@ -19,8 +19,11 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { format, subDays } from 'date-fns';
 import Link from 'next/link';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { useRouter } from 'next/navigation';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, LineChart, Line, BarChart, Bar } from 'recharts';
 import { format as formatDate } from 'date-fns';
+import { getStatusColor, getStatusLabel, getPriorityColor, getPriorityLabel, getAllPriorityChartColors, getPriorityChartColor } from '@/lib/colors';
+import { cn } from '@/lib/utils';
 
 function StatCard({ title, value, change, trend, icon: Icon }: any) {
   return (
@@ -48,21 +51,6 @@ function StatCard({ title, value, change, trend, icon: Icon }: any) {
 }
 
 function TicketRow({ ticket }: any) {
-  const statusColors: any = {
-    new: 'default',
-    open: 'secondary',
-    pending: 'warning',
-    resolved: 'success',
-    closed: 'outline',
-  };
-
-  const priorityColors: any = {
-    low: 'outline',
-    medium: 'default',
-    high: 'warning',
-    urgent: 'destructive',
-  };
-
   return (
     <Link href={`/tickets/${ticket.id}`}>
       <div className="flex items-center justify-between p-4 hover:bg-accent/50 rounded-lg transition-colors cursor-pointer">
@@ -73,8 +61,14 @@ function TicketRow({ ticket }: any) {
           <div className="space-y-1">
             <div className="flex items-center space-x-2">
               <p className="text-sm font-medium">{ticket.ticket_number}</p>
-              <Badge variant={statusColors[ticket.status]}>{ticket.status}</Badge>
-              <Badge variant={priorityColors[ticket.priority]}>{ticket.priority}</Badge>
+              <Badge variant={`status-${ticket.status.toLowerCase()}` as any} className="gap-1.5">
+                <span className={cn('h-2 w-2 rounded-full', getStatusColor(ticket.status).dot)} />
+                {getStatusLabel(ticket.status)}
+              </Badge>
+              <Badge variant={`priority-${ticket.priority.toLowerCase()}` as any} className="gap-1.5">
+                <span className={cn('h-2 w-2 rounded-full', getPriorityColor(ticket.priority).dot)} />
+                {getPriorityLabel(ticket.priority)}
+              </Badge>
             </div>
             <p className="text-sm text-muted-foreground">{ticket.subject}</p>
             <p className="text-xs text-muted-foreground">
@@ -93,6 +87,16 @@ function TicketRow({ ticket }: any) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
+
+  // Redirect agents to their dedicated dashboard
+  React.useEffect(() => {
+    const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+    if (user?.role === 'agent') {
+      router.push('/dashboard/agent');
+    }
+  }, [router]);
+
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
@@ -154,18 +158,16 @@ export default function DashboardPage() {
     });
   }, [ticketTrends]);
 
-  // Transform priority data from stats
+  // Transform priority data from stats using centralized colors
   const priorityData = stats ? stats.priority_distribution?.map((item: any) => ({
-    name: item.priority.charAt(0).toUpperCase() + item.priority.slice(1),
+    name: getPriorityLabel(item.priority),
     value: item.count,
-    color: item.priority === 'low' ? '#10b981' :
-           item.priority === 'medium' ? '#3b82f6' :
-           item.priority === 'high' ? '#f59e0b' : '#ef4444'
+    color: getPriorityChartColor(item.priority)
   })) || [] : [
-    { name: 'Low', value: 0, color: '#10b981' },
-    { name: 'Medium', value: 0, color: '#3b82f6' },
-    { name: 'High', value: 0, color: '#f59e0b' },
-    { name: 'Urgent', value: 0, color: '#ef4444' },
+    { name: 'Low', value: 0, color: getPriorityChartColor('low') },
+    { name: 'Medium', value: 0, color: getPriorityChartColor('medium') },
+    { name: 'High', value: 0, color: getPriorityChartColor('high') },
+    { name: 'Urgent', value: 0, color: getPriorityChartColor('urgent') },
   ];
 
   return (
@@ -225,27 +227,27 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={ticketTrendData}>
+              <BarChart data={ticketTrendData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis
                   dataKey="date"
                   className="text-xs"
                 />
-                <YAxis className="text-xs" />
+                <YAxis className="text-xs" allowDecimals={false} />
                 <Tooltip
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length) {
                       return (
                         <div className="bg-background border rounded p-2 shadow-lg">
                           <p className="text-sm font-medium">{label}</p>
-                          <p className="text-xs text-blue-600">
-                            Total: {payload[0]?.value || 0} tickets
+                          <p className="text-xs" style={{ color: '#6b7280' }}>
+                            Total: {payload.find(p => p.dataKey === 'total')?.value || 0} tickets
                           </p>
-                          <p className="text-xs text-green-600">
-                            Resolved: {payload[1]?.value || 0} tickets
+                          <p className="text-xs" style={{ color: '#10b981' }}>
+                            Resolved: {payload.find(p => p.dataKey === 'resolved')?.value || 0} tickets
                           </p>
-                          <p className="text-xs text-orange-600">
-                            Open: {payload[2]?.value || 0} tickets
+                          <p className="text-xs" style={{ color: '#3b82f6' }}>
+                            Open: {payload.find(p => p.dataKey === 'open')?.value || 0} tickets
                           </p>
                         </div>
                       );
@@ -253,34 +255,32 @@ export default function DashboardPage() {
                     return null;
                   }}
                 />
-                <Area
-                  type="monotone"
+                <Legend
+                  wrapperStyle={{ fontSize: '12px' }}
+                  iconType="square"
+                />
+                <Bar
                   dataKey="total"
-                  stackId="1"
-                  stroke="#3b82f6"
-                  fill="#3b82f6"
-                  fillOpacity={0.6}
+                  fill="#6b7280"
+                  fillOpacity={0.3}
                   name="Total Tickets"
+                  radius={[4, 4, 0, 0]}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="resolved"
-                  stackId="2"
-                  stroke="#10b981"
-                  fill="#10b981"
-                  fillOpacity={0.6}
-                  name="Resolved"
-                />
-                <Area
-                  type="monotone"
+                <Bar
                   dataKey="open"
-                  stackId="3"
-                  stroke="#f59e0b"
-                  fill="#f59e0b"
-                  fillOpacity={0.6}
+                  fill="#3b82f6"
+                  fillOpacity={0.7}
                   name="Open"
+                  radius={[4, 4, 0, 0]}
                 />
-              </AreaChart>
+                <Bar
+                  dataKey="resolved"
+                  fill="#10b981"
+                  fillOpacity={0.9}
+                  name="Resolved"
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -309,7 +309,35 @@ export default function DashboardPage() {
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="bg-background border rounded p-2 shadow-lg">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-3 w-3 rounded-full"
+                              style={{ backgroundColor: data.color }}
+                            />
+                            <span className="text-sm font-medium">{data.name}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {data.value} tickets
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: '12px' }}
+                  iconType="circle"
+                  formatter={(value, entry: any) => {
+                    return <span style={{ color: entry.color }}>{value}</span>;
+                  }}
+                />
               </PieChart>
             </ResponsiveContainer>
           </CardContent>

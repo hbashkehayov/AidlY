@@ -65,20 +65,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { RichTextEditor } from '@/components/editor/rich-text-editor';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { getStatusColor, getStatusLabel, getPriorityColor, getPriorityLabel } from '@/lib/colors';
 
 const statusConfig = {
-  open: { label: 'Open', color: 'bg-yellow-500' },
-  pending: { label: 'Pending', color: 'bg-orange-500' },
-  resolved: { label: 'Resolved', color: 'bg-green-500' },
-  closed: { label: 'Closed', color: 'bg-gray-400' },
-  cancelled: { label: 'Cancelled', color: 'bg-red-500' },
-};
-
-const priorityConfig = {
-  low: { label: 'Low', color: 'bg-gray-400' },
-  medium: { label: 'Medium', color: 'bg-blue-500' },
-  high: { label: 'High', color: 'bg-orange-500' },
-  urgent: { label: 'Urgent', color: 'bg-red-500' },
+  open: { label: 'Open' },
+  pending: { label: 'Pending' },
+  resolved: { label: 'Resolved' },
+  closed: { label: 'Closed' },
+  cancelled: { label: 'Cancelled' },
+  new: { label: 'New' },
 };
 
 interface TicketComment {
@@ -149,6 +144,50 @@ const blockExternalImages = (html: string): string => {
     /<img([^>]+)src=["'](https?:\/\/[^"']+)["']/gi,
     '<img$1src="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'100\'%3E%3Crect width=\'200\' height=\'100\' fill=\'%23f3f4f6\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' dominant-baseline=\'middle\' text-anchor=\'middle\' fill=\'%239ca3af\' font-family=\'Arial\' font-size=\'12\'%3EExternal Image Blocked%3C/text%3E%3C/svg%3E"'
   );
+};
+
+const cleanEmailThreadMetadata = (content: string): string => {
+  if (!content) return content;
+
+  // Remove HTML tags first
+  let cleaned = content.replace(/<[^>]*>/g, '');
+
+  // Split by common footer/signature patterns and take only the first part
+  const footerPatterns = [
+    /On\s+.+?(wrote|said):/i,
+    /Ticket Update:/i,
+    /From:/i,
+    /View Full Ticket/i,
+    /This is an automated message/i,
+    /Best regards/i,
+    /Sincerely/i,
+    /Thanks/i,
+    /Regards/i,
+    /Sent from/i,
+    /Get Outlook/i,
+    /Ticket\s*#[A-Z]+-\d+/i,
+    /[-_]{2,}/,  // Signature separator
+  ];
+
+  // Find the earliest occurrence of any footer pattern
+  let cutoffIndex = cleaned.length;
+  for (const pattern of footerPatterns) {
+    const match = cleaned.match(pattern);
+    if (match && match.index !== undefined && match.index < cutoffIndex) {
+      cutoffIndex = match.index;
+    }
+  }
+
+  // Cut the string at the earliest footer pattern
+  cleaned = cleaned.substring(0, cutoffIndex);
+
+  // Remove quoted text that starts with >
+  cleaned = cleaned.replace(/^>.*$/gm, '');
+
+  // Remove excessive whitespace and newlines
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  return cleaned;
 };
 
 export default function TicketPage() {
@@ -485,15 +524,15 @@ export default function TicketPage() {
                     #{ticket.ticket_number || 'N/A'}
                   </span>
                   {ticket.status && (
-                    <Badge variant="outline" className="gap-1">
-                      <span className={cn('h-2 w-2 rounded-full', statusConfig[ticket.status as keyof typeof statusConfig]?.color || 'bg-gray-400')} />
-                      {statusConfig[ticket.status as keyof typeof statusConfig]?.label || ticket.status}
+                    <Badge variant={`status-${ticket.status.toLowerCase()}` as any} className="gap-1.5">
+                      <span className={cn('h-2 w-2 rounded-full', getStatusColor(ticket.status).dot)} />
+                      {statusConfig[ticket.status as keyof typeof statusConfig]?.label || getStatusLabel(ticket.status)}
                     </Badge>
                   )}
                   {ticket.priority && (
-                    <Badge variant="outline" className="gap-1">
-                      <span className={cn('h-2 w-2 rounded-full', priorityConfig[ticket.priority as keyof typeof priorityConfig]?.color || 'bg-gray-400')} />
-                      {priorityConfig[ticket.priority as keyof typeof priorityConfig]?.label || ticket.priority}
+                    <Badge variant={`priority-${ticket.priority.toLowerCase()}` as any} className="gap-1.5">
+                      <span className={cn('h-2 w-2 rounded-full', getPriorityColor(ticket.priority).dot)} />
+                      {getPriorityLabel(ticket.priority)}
                     </Badge>
                   )}
                 </div>
@@ -841,7 +880,7 @@ export default function TicketPage() {
                       !(comment.is_internal_note && comment.content?.startsWith('FORWARD_MESSAGE:'))
                     )
                     .map((comment: TicketComment) => {
-                    const isExpanded = expandedEmails[comment.id] !== false;
+                    const isExpanded = expandedEmails[comment.id] === true;
 
                     // Determine sender info based on comment type
                     // A comment is from an agent if it has a user_id (and user object)
@@ -963,7 +1002,7 @@ export default function TicketPage() {
                                   {/* Collapsed preview */}
                                   {!isExpanded && (
                                     <p className="text-sm text-gray-700 line-clamp-2">
-                                      {comment.body_plain || (displayContent && displayContent.replace(/<[^>]*>/g, '').substring(0, 150))}
+                                      {cleanEmailThreadMetadata(comment.body_plain || displayContent || '').substring(0, 150) || 'No content'}
                                     </p>
                                   )}
                                 </div>
@@ -1108,6 +1147,8 @@ export default function TicketPage() {
                     <RichTextEditor
                       content={replyContent}
                       onChange={setReplyContent}
+                      ticketId={ticketId as string}
+                      enableAI={true}
                     />
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1172,6 +1213,8 @@ export default function TicketPage() {
                     <RichTextEditor
                       content={replyContent}
                       onChange={setReplyContent}
+                      ticketId={ticketId as string}
+                      enableAI={true}
                     />
 
                     <div className="flex items-center justify-between">
@@ -1243,25 +1286,25 @@ export default function TicketPage() {
                   <SelectContent>
                     <SelectItem value="low">
                       <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 bg-gray-400 rounded-full"></div>
+                        <div className={cn("h-2 w-2 rounded-full", getPriorityColor('low').dot)}></div>
                         Low
                       </div>
                     </SelectItem>
                     <SelectItem value="medium">
                       <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
+                        <div className={cn("h-2 w-2 rounded-full", getPriorityColor('medium').dot)}></div>
                         Medium
                       </div>
                     </SelectItem>
                     <SelectItem value="high">
                       <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 bg-orange-500 rounded-full"></div>
+                        <div className={cn("h-2 w-2 rounded-full", getPriorityColor('high').dot)}></div>
                         High
                       </div>
                     </SelectItem>
                     <SelectItem value="urgent">
                       <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 bg-red-500 rounded-full"></div>
+                        <div className={cn("h-2 w-2 rounded-full", getPriorityColor('urgent').dot)}></div>
                         Urgent
                       </div>
                     </SelectItem>

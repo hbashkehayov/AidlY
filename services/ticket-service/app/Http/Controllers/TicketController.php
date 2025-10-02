@@ -1107,10 +1107,12 @@ class TicketController extends Controller
     {
         $this->validate($request, [
             'client_ids' => 'required|string',
+            'agent_id' => 'nullable|string',
         ]);
 
         $clientIds = explode(',', $request->input('client_ids'));
         $clientIds = array_filter(array_map('trim', $clientIds));
+        $agentId = $request->input('agent_id');
 
         if (empty($clientIds)) {
             return response()->json([
@@ -1121,6 +1123,15 @@ class TicketController extends Controller
 
         // Query tickets grouped by client_id using parameter binding
         $placeholders = implode(',', array_fill(0, count($clientIds), '?'));
+
+        // Build WHERE clause with optional agent filter
+        $whereClause = "WHERE client_id IN ({$placeholders}) AND is_deleted = false";
+        $params = $clientIds;
+
+        if ($agentId) {
+            $whereClause .= " AND assigned_agent_id = ?";
+            $params[] = $agentId;
+        }
 
         $stats = DB::select("
             SELECT
@@ -1136,10 +1147,9 @@ class TicketController extends Controller
                 COUNT(CASE WHEN status IN ('new', 'open', 'pending', 'on_hold') THEN 1 END) as active,
                 COUNT(CASE WHEN status IN ('resolved', 'closed', 'cancelled') THEN 1 END) as inactive
             FROM tickets
-            WHERE client_id IN ({$placeholders})
-              AND is_deleted = false
+            {$whereClause}
             GROUP BY client_id
-        ", $clientIds);
+        ", $params);
 
         // Format the response as a map
         $result = [];

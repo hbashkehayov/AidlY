@@ -1,19 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -26,7 +21,6 @@ import {
   Search,
   Filter,
   Ticket,
-  Star,
   Ban,
   Users,
   MessageSquare,
@@ -57,23 +51,9 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 
-function CustomerRow({ customer }: any) {
+function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
   const queryClient = useQueryClient();
-
-  const toggleVIPMutation = useMutation({
-    mutationFn: async () => {
-      return await api.clients.update(customer.id, {
-        is_vip: !customer.is_vip
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['customers'] });
-      toast.success(customer.is_vip ? 'VIP status removed' : 'Marked as VIP');
-    },
-    onError: () => {
-      toast.error('Failed to update VIP status');
-    }
-  });
+  const isAgent = userRole === 'agent';
 
   const toggleBlockMutation = useMutation({
     mutationFn: async () => {
@@ -107,9 +87,29 @@ function CustomerRow({ customer }: any) {
   const initials = customer.name
     ? customer.name.split(' ').map((n: string) => n[0]).join('').toUpperCase()
     : 'U';
+
+  const handleRowClick = () => {
+    if (!isAgent) {
+      window.location.href = `/customers/${customer.id}`;
+    }
+  };
+
   return (
-    <TableRow className="cursor-pointer hover:bg-accent/50">
-      <TableCell>
+    <TableRow
+      className={!isAgent ? "hover:bg-accent/50" : ""}
+    >
+      {!isAgent && (
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={onSelectChange}
+          />
+        </TableCell>
+      )}
+      <TableCell
+        className={!isAgent ? "cursor-pointer" : ""}
+        onClick={handleRowClick}
+      >
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
             <AvatarImage src={customer.avatar_url} />
@@ -118,9 +118,6 @@ function CustomerRow({ customer }: any) {
           <div>
             <div className="flex items-center gap-2">
               <p className="font-medium">{customer.name || 'Unknown'}</p>
-              {customer.is_vip && (
-                <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
-              )}
               {customer.is_blocked && (
                 <Ban className="h-3 w-3 text-red-500" />
               )}
@@ -129,7 +126,10 @@ function CustomerRow({ customer }: any) {
           </div>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell
+        className={!isAgent ? "cursor-pointer" : ""}
+        onClick={handleRowClick}
+      >
         <div>
           <p className="text-sm">{customer.company || '-'}</p>
           {(customer.city || customer.country) && (
@@ -139,7 +139,10 @@ function CustomerRow({ customer }: any) {
           )}
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell
+        className={!isAgent ? "cursor-pointer" : ""}
+        onClick={handleRowClick}
+      >
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <div className="text-2xl font-bold text-gray-900">
@@ -157,7 +160,10 @@ function CustomerRow({ customer }: any) {
           </div>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell
+        className={!isAgent ? "cursor-pointer" : ""}
+        onClick={handleRowClick}
+      >
         {customer.created_at ? (
           <div className="text-sm">
             <p>{format(new Date(customer.created_at), 'MMM d, yyyy')}</p>
@@ -169,113 +175,100 @@ function CustomerRow({ customer }: any) {
           <span className="text-sm text-muted-foreground">-</span>
         )}
       </TableCell>
-      <TableCell className="text-right">
-        <TooltipProvider>
-          <div className="flex items-center justify-end gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => window.location.href = `/customers/${customer.id}`}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>View Profile</TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "h-8 w-8",
-                    customer.is_vip && "text-yellow-500 hover:text-yellow-600"
-                  )}
-                  onClick={() => toggleVIPMutation.mutate()}
-                  disabled={toggleVIPMutation.isPending}
-                >
-                  <Star className={cn("h-4 w-4", customer.is_vip && "fill-current")} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {customer.is_vip ? 'Remove VIP Status' : 'Mark as VIP'}
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "h-8 w-8",
-                    customer.is_blocked && "text-red-500 hover:text-red-600"
-                  )}
-                  onClick={() => toggleBlockMutation.mutate()}
-                  disabled={toggleBlockMutation.isPending}
-                >
-                  <Ban className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {customer.is_blocked ? 'Unblock Customer' : 'Block Customer'}
-              </TooltipContent>
-            </Tooltip>
-
-            <AlertDialog>
+      {!isAgent && (
+        <TableCell className="text-right">
+          <TooltipProvider>
+            <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50"
-                      disabled={deleteMutation.isPending}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </AlertDialogTrigger>
-                </TooltipTrigger>
-                <TooltipContent>Delete Customer</TooltipContent>
-              </Tooltip>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will permanently delete <strong>{customer.name || customer.email}</strong> and all associated data.
-                    This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => deleteMutation.mutate()}
-                    className="bg-red-500 hover:bg-red-600"
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => window.location.href = `/customers/${customer.id}`}
                   >
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        </TooltipProvider>
-      </TableCell>
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>View Profile</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "h-8 w-8",
+                      customer.is_blocked && "text-red-500 hover:text-red-600"
+                    )}
+                    onClick={() => toggleBlockMutation.mutate()}
+                    disabled={toggleBlockMutation.isPending}
+                  >
+                    <Ban className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {customer.is_blocked ? 'Unblock Customer' : 'Block Customer'}
+                </TooltipContent>
+              </Tooltip>
+
+              <AlertDialog>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50"
+                        disabled={deleteMutation.isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </AlertDialogTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>Delete Customer</TooltipContent>
+                </Tooltip>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete <strong>{customer.name || customer.email}</strong> and all associated data.
+                      This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteMutation.mutate()}
+                      className="bg-red-500 hover:bg-red-600"
+                    >
+                      {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </TooltipProvider>
+        </TableCell>
+      )}
     </TableRow>
   );
 }
 
 export default function CustomersPage() {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterVIP, setFilterVIP] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
+  const [selectedCustomers, setSelectedCustomers] = useState<string[]>([]);
+  const [isExiting, setIsExiting] = useState(false);
+  const queryClient = useQueryClient();
+
+  const isAgent = user?.role === 'agent';
 
   const { data: customers, isLoading } = useQuery({
-    queryKey: ['customers', searchQuery, filterVIP, currentPage, itemsPerPage],
+    queryKey: ['customers', searchQuery, currentPage, itemsPerPage, user?.id, isAgent],
     queryFn: async () => {
       try {
         // Build query parameters
@@ -288,10 +281,9 @@ export default function CustomersPage() {
           params.search = searchQuery;
         }
 
-        if (filterVIP === 'vip') {
-          params.is_vip = true;
-        } else if (filterVIP === 'regular') {
-          params.is_vip = false;
+        // If agent, filter by customers who have tickets assigned to them
+        if (isAgent && user?.id) {
+          params.agent_id = user.id;
         }
 
         // Fetch from real API
@@ -321,26 +313,115 @@ export default function CustomersPage() {
     },
   });
 
+  // Selection handlers - Define these first before using them
+  const handleClearSelection = useCallback(() => {
+    setIsExiting(true);
+    setTimeout(() => {
+      setSelectedCustomers([]);
+      setIsExiting(false);
+    }, 300); // Match the animation duration
+  }, []);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      const allIds = customers?.data?.map((c: any) => c.id) || [];
+      setSelectedCustomers(allIds);
+      setIsExiting(false);
+    } else {
+      handleClearSelection();
+    }
+  }, [customers?.data, handleClearSelection]);
+
+  const handleSelectCustomer = useCallback((customerId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedCustomers(prev => [...prev, customerId]);
+      setIsExiting(false);
+    } else {
+      setSelectedCustomers(prev => {
+        const newSelection = prev.filter(id => id !== customerId);
+        if (newSelection.length === 0) {
+          handleClearSelection();
+          return prev;
+        }
+        return newSelection;
+      });
+    }
+  }, [handleClearSelection]);
+
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, filterVIP]);
+    handleClearSelection();
+  }, [searchQuery, handleClearSelection]);
+
+  // Clear selection when page changes
+  useEffect(() => {
+    handleClearSelection();
+  }, [currentPage, handleClearSelection]);
 
   const stats = {
     total: customers?.meta?.total || 0,
-    vip: customers?.data?.filter((c: any) => c.is_vip).length || 0,
-    active: customers?.data?.filter((c: any) => c.active_tickets > 0).length || 0,
+    blocked: customers?.meta?.blocked_count || 0,
+    active: customers?.meta?.active_support_count || 0,
     new_this_month: customers?.meta?.new_this_month || 0,
   };
+
+  // Bulk delete mutation
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (customerIds: string[]) => {
+      // Delete customers one by one
+      const promises = customerIds.map(id => api.clients.delete(id));
+      return await Promise.all(promises);
+    },
+    onSuccess: () => {
+      const count = selectedCustomers.length;
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      handleClearSelection();
+      toast.success(`${count} customer(s) deleted successfully`);
+    },
+    onError: () => {
+      toast.error('Failed to delete some customers');
+    }
+  });
+
+  // Bulk block mutation
+  const bulkBlockMutation = useMutation({
+    mutationFn: async ({ customerIds, block }: { customerIds: string[], block: boolean }) => {
+      // Block/unblock customers one by one
+      const promises = customerIds.map(id => api.clients.update(id, { is_blocked: block }));
+      return await Promise.all(promises);
+    },
+    onSuccess: (_, variables) => {
+      const count = selectedCustomers.length;
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      handleClearSelection();
+      toast.success(
+        variables.block
+          ? `${count} customer(s) blocked successfully`
+          : `${count} customer(s) unblocked successfully`
+      );
+    },
+    onError: () => {
+      toast.error('Failed to update some customers');
+    }
+  });
+
+  const isAllSelected = customers?.data?.length > 0 && selectedCustomers.length === customers?.data?.length;
+  const showBulkActions = selectedCustomers.length > 0 || isExiting;
 
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Customers</h2>
+          <h2 className="text-3xl font-bold tracking-tight">
+            {isAgent ? 'My Customers' : 'Customers'}
+          </h2>
           <p className="text-muted-foreground">
-            Manage your customer relationships and support history
+            {isAgent
+              ? 'View customers from your assigned tickets'
+              : 'Manage your customer relationships and support history'
+            }
           </p>
         </div>
       </div>
@@ -349,43 +430,47 @@ export default function CustomersPage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Customers</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {isAgent ? 'My Customers' : 'Total Customers'}
+            </CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.total}</div>
             <p className="text-xs text-muted-foreground">
-              +{stats.new_this_month} new this month
+              {isAgent ? `${stats.new_this_month} new this month` : `+${stats.new_this_month} new this month`}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">VIP Customers</CardTitle>
-            <Star className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Blocked Customers</CardTitle>
+            <Ban className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.vip}</div>
+            <div className="text-2xl font-bold">{stats.blocked}</div>
             <p className="text-xs text-muted-foreground">
-              High value accounts
+              {isAgent ? 'From my customers' : 'Restricted accounts'}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Support</CardTitle>
+            <CardTitle className="text-sm font-medium">Pending Support</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.active}</div>
             <p className="text-xs text-muted-foreground">
-              With open tickets
+              {isAgent ? 'My pending tickets' : 'With pending tickets'}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Tickets</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {isAgent ? 'My Tickets' : 'Total Tickets'}
+            </CardTitle>
             <Ticket className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -393,11 +478,111 @@ export default function CustomersPage() {
               {customers?.meta?.total_tickets_overall || 0}
             </div>
             <p className="text-xs text-muted-foreground">
-              Across all customers
+              {isAgent ? 'Assigned to me' : 'Across all customers'}
             </p>
           </CardContent>
         </Card>
       </div>
+
+      {/* Bulk Actions */}
+      {!isAgent && showBulkActions && (
+        <Card className={cn(
+          "bg-accent/50 transition-all duration-300",
+          isExiting
+            ? "animate-out fade-out slide-out-to-top-2"
+            : "animate-in fade-in slide-in-from-top-2"
+        )}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <p className={cn(
+                "text-sm font-medium transition-all duration-500",
+                isExiting ? "animate-out fade-out" : "animate-in fade-in"
+              )}>
+                {selectedCustomers.length} customer(s) selected
+              </p>
+              <div className={cn(
+                "flex gap-2 transition-all duration-500",
+                isExiting
+                  ? "animate-out fade-out slide-out-to-right-2"
+                  : "animate-in fade-in slide-in-from-right-2"
+              )}>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={bulkBlockMutation.isPending}
+                      className="border-red-500/30 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-500/50 transition-all duration-200"
+                    >
+                      <Ban className="h-4 w-4 mr-2" />
+                      Block Selected
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Block Customers?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to block {selectedCustomers.length} customer(s)?
+                        They will not be able to create new tickets.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => bulkBlockMutation.mutate({ customerIds: selectedCustomers, block: true })}
+                        className="bg-orange-500 hover:bg-orange-600"
+                      >
+                        Block Customers
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={bulkDeleteMutation.isPending}
+                      className="bg-red-500/90 hover:bg-red-600 transition-all duration-200"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Selected
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Customers?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to delete {selectedCustomers.length} customer(s)?
+                        This action cannot be undone and will permanently delete all customer data.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => bulkDeleteMutation.mutate(selectedCustomers)}
+                        className="bg-red-500 hover:bg-red-600"
+                      >
+                        {bulkDeleteMutation.isPending ? 'Deleting...' : 'Delete Customers'}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearSelection}
+                  className="transition-all duration-200"
+                >
+                  Clear Selection
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters and Search */}
       <Card>
@@ -406,22 +591,12 @@ export default function CustomersPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by name, email, or company..."
+                placeholder={isAgent ? "Search my customers..." : "Search by name, email, or company..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
               />
             </div>
-            <Select value={filterVIP} onValueChange={setFilterVIP}>
-              <SelectTrigger className="w-full sm:w-[180px]">
-                <SelectValue placeholder="All Customers" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Customers</SelectItem>
-                <SelectItem value="vip">VIP Only</SelectItem>
-                <SelectItem value="regular">Regular</SelectItem>
-              </SelectContent>
-            </Select>
             <Button variant="outline" size="icon">
               <Filter className="h-4 w-4" />
             </Button>
@@ -435,17 +610,28 @@ export default function CustomersPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                {!isAgent && (
+                  <TableHead className="w-[50px]">
+                    <Checkbox
+                      checked={isAllSelected}
+                      onCheckedChange={handleSelectAll}
+                      aria-label="Select all customers"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Customer</TableHead>
                 <TableHead>Company</TableHead>
                 <TableHead>Tickets</TableHead>
                 <TableHead>Created At</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                {!isAgent && (
+                  <TableHead className="text-right">Actions</TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8">
+                  <TableCell colSpan={isAgent ? 4 : 6} className="text-center py-8">
                     <div className="flex justify-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     </div>
@@ -453,13 +639,19 @@ export default function CustomersPage() {
                 </TableRow>
               ) : customers?.data?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8">
+                  <TableCell colSpan={isAgent ? 4 : 6} className="text-center py-8">
                     No customers found
                   </TableCell>
                 </TableRow>
               ) : (
                 customers?.data?.map((customer: any) => (
-                  <CustomerRow key={customer.id} customer={customer} />
+                  <CustomerRow
+                    key={customer.id}
+                    customer={customer}
+                    isSelected={selectedCustomers.includes(customer.id)}
+                    onSelectChange={(checked: boolean) => handleSelectCustomer(customer.id, checked)}
+                    userRole={user?.role}
+                  />
                 ))
               )}
             </TableBody>

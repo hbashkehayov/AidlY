@@ -79,7 +79,7 @@ class ExportController extends Controller
         $authService = env('AUTH_SERVICE_URL', 'http://localhost:8001');
 
         // Build query for tickets
-        $ticketsQuery = DB::table('tickets');
+        $ticketsQuery = DB::connection('pgsql')->table('tickets');
 
         if ($dateFrom) {
             $ticketsQuery->where('created_at', '>=', $dateFrom);
@@ -90,9 +90,9 @@ class ExportController extends Controller
 
         $tickets = $ticketsQuery->get();
 
-        // Get client and agent names from other services
-        $clients = DB::table('clients')->get()->keyBy('id');
-        $users = DB::table('users')->get()->keyBy('id');
+        // Get client and agent names
+        $clients = DB::connection('pgsql')->table('clients')->get()->keyBy('id');
+        $users = DB::connection('pgsql')->table('users')->get()->keyBy('id');
 
         // Calculate statistics
         $stats = [
@@ -112,11 +112,44 @@ class ExportController extends Controller
             'date_to' => $dateTo ?: 'Present',
         ];
 
+        // Calculate agent performance metrics
+        $agentPerformance = [];
+        foreach ($tickets as $ticket) {
+            if ($ticket->assigned_agent_id) {
+                $agentId = $ticket->assigned_agent_id;
+                if (!isset($agentPerformance[$agentId])) {
+                    $agent = $users->get($agentId);
+                    $agentPerformance[$agentId] = [
+                        'name' => $agent ? $agent->name : "Agent {$agentId}",
+                        'resolved' => 0,
+                        'total' => 0,
+                    ];
+                }
+                $agentPerformance[$agentId]['total']++;
+                if ($ticket->status === 'resolved' || $ticket->status === 'closed') {
+                    $agentPerformance[$agentId]['resolved']++;
+                }
+            }
+        }
+
+        // Sort agents by resolved count and calculate percentages
+        $agentPerformance = collect($agentPerformance)
+            ->sortByDesc('resolved')
+            ->map(function($agent) {
+                $agent['percentage'] = $agent['total'] > 0
+                    ? round(($agent['resolved'] / $agent['total']) * 100, 1)
+                    : 0;
+                return $agent;
+            })
+            ->values()
+            ->toArray();
+
         return [
             'stats' => $stats,
             'tickets' => $tickets,
             'clients' => $clients,
             'users' => $users,
+            'agent_performance' => $agentPerformance,
             'date_from' => $dateFrom,
             'date_to' => $dateTo,
         ];
@@ -232,6 +265,38 @@ class ExportController extends Controller
         }
         $row++;
 
+        // Agent Performance Section
+        if (!empty($data['agent_performance'])) {
+            $sheet->mergeCells("A{$row}:D{$row}");
+            $sheet->setCellValue("A{$row}", '👤 AGENT PERFORMANCE');
+            $sheet->getStyle("A{$row}")->getFont()->setBold(true)->setSize(14);
+            $sheet->getStyle("A{$row}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('E5E7EB');
+            $row++;
+
+            $sheet->setCellValue("A{$row}", 'Agent Name');
+            $sheet->setCellValue("B{$row}", 'Resolved');
+            $sheet->setCellValue("C{$row}", 'Total Assigned');
+            $sheet->setCellValue("D{$row}", 'Resolution Rate');
+            $sheet->getStyle("A{$row}:D{$row}")->getFont()->setBold(true);
+            $sheet->getStyle("A{$row}:D{$row}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('F3F4F6');
+            $row++;
+
+            foreach ($data['agent_performance'] as $agent) {
+                $sheet->setCellValue("A{$row}", $agent['name']);
+                $sheet->setCellValue("B{$row}", $agent['resolved']);
+                $sheet->setCellValue("C{$row}", $agent['total']);
+                $sheet->setCellValue("D{$row}", $agent['percentage'] . '%');
+
+                // Color code based on performance (10+ resolved = green)
+                if ($agent['resolved'] >= 10) {
+                    $sheet->getStyle("B{$row}")->getFont()->getColor()->setARGB('22C55E');
+                    $sheet->getStyle("B{$row}")->getFont()->setBold(true);
+                }
+                $row++;
+            }
+            $row++;
+        }
+
         // Team Overview Section
         $sheet->mergeCells("A{$row}:C{$row}");
         $sheet->setCellValue("A{$row}", '👥 TEAM OVERVIEW');
@@ -258,7 +323,7 @@ class ExportController extends Controller
         }
 
         // Auto-size columns
-        foreach (range('A', 'C') as $col) {
+        foreach (range('A', 'D') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 

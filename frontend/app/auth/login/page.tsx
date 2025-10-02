@@ -25,11 +25,21 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
+
+      // Get user role from localStorage after login
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      router.push('/dashboard');
+
+      // Redirect based on user role
+      if (user?.role === 'agent') {
+        router.push('/dashboard/agent');
+      } else {
+        router.push('/dashboard');
+      }
     } catch (error: any) {
       toast({
         title: "Login failed",

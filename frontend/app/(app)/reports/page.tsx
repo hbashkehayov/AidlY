@@ -27,6 +27,8 @@ import {
   Edit,
   Trash,
   UserPlus,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -52,16 +54,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ExportDialog } from '@/components/export-dialog';
 import { cn } from '@/lib/utils';
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-
-const statusConfig = {
-  new: { label: 'New', color: 'bg-blue-500' },
-  open: { label: 'Open', color: 'bg-yellow-500' },
-  pending: { label: 'Pending', color: 'bg-orange-500' },
-  on_hold: { label: 'On Hold', color: 'bg-gray-500' },
-  resolved: { label: 'Resolved', color: 'bg-green-500' },
-  closed: { label: 'Closed', color: 'bg-gray-400' },
-  cancelled: { label: 'Cancelled', color: 'bg-red-500' },
-};
+import { getStatusColor, getStatusLabel, getPriorityColor, getPriorityLabel, getPriorityChartColor } from '@/lib/colors';
 
 const actionIcons: Record<string, any> = {
   created: UserPlus,
@@ -81,6 +74,10 @@ export default function ReportsPage() {
     to: new Date(),
   });
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [auditLogsPage, setAuditLogsPage] = useState(1);
+  const [auditLogsPerPage, setAuditLogsPerPage] = useState(20);
+  const [ticketHistoryPage, setTicketHistoryPage] = useState(1);
+  const [ticketHistoryPerPage, setTicketHistoryPerPage] = useState(20);
 
   // Check if user is admin
   if (user?.role !== 'admin') {
@@ -112,25 +109,57 @@ export default function ReportsPage() {
     },
   });
 
-  // Fetch agents only (not all users)
-  const { data: agentsData } = useQuery({
-    queryKey: ['agents-reports'],
+  // Fetch all users (for lookups)
+  const { data: allUsersData } = useQuery({
+    queryKey: ['all-users-reports'],
     queryFn: async () => {
       const response = await api.users.list();
-      const users = response.data?.data || response.data || [];
-      // Filter to show only agents
-      return users.filter((u: any) => u.role === 'agent');
-    },
-  });
-
-  // Fetch all clients
-  const { data: clientsData } = useQuery({
-    queryKey: ['all-clients-reports'],
-    queryFn: async () => {
-      const response = await api.clients.list({ per_page: 100 });
       return response.data?.data || response.data || [];
     },
   });
+
+  // Filter agents for display
+  const agentsData = allUsersData?.filter((u: any) => u.role === 'agent') || [];
+
+  // Fetch all clients
+  const { data: clientsResponse } = useQuery({
+    queryKey: ['all-clients-reports'],
+    queryFn: async () => {
+      const response = await api.clients.list({ per_page: 1000 });
+      return response.data || {};
+    },
+  });
+
+  const clientsData = clientsResponse?.data || [];
+  const totalClients = clientsResponse?.meta?.total || clientsData?.length || 0;
+
+  // Helper function to get client name from ticket
+  const getClientNameFromTicket = (ticket: any) => {
+    // First check if ticket has embedded client object
+    if (ticket.client?.name) return ticket.client.name;
+    // Then check for client_name field
+    if (ticket.client_name) return ticket.client_name;
+    // Finally, look up by client_id
+    if (ticket.client_id) {
+      const client = clientsData.find((c: any) => c.id === ticket.client_id);
+      return client?.name || 'Unknown';
+    }
+    return 'Unknown';
+  };
+
+  // Helper function to get agent/user name from ticket
+  const getAgentNameFromTicket = (ticket: any) => {
+    // First check if ticket has embedded assigned_agent object
+    if (ticket.assigned_agent?.name) return ticket.assigned_agent.name;
+    // Then check for assigned_agent_name field
+    if (ticket.assigned_agent_name) return ticket.assigned_agent_name;
+    // Finally, look up by assigned_agent_id
+    if (ticket.assigned_agent_id) {
+      const user = allUsersData?.find((u: any) => u.id === ticket.assigned_agent_id);
+      return user?.name || 'Unassigned';
+    }
+    return 'Unassigned';
+  };
 
   // Filter tickets by date range
   const getFilteredTickets = () => {
@@ -191,18 +220,26 @@ export default function ReportsPage() {
   }, {}) || {};
 
   // Get recent tickets from filtered data
-  const getRecentTickets = () => {
+  const getAllRecentTickets = () => {
     if (!filteredTickets || filteredTickets.length === 0) return [];
 
     return filteredTickets
-      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 50);
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   };
+
+  const allRecentTickets = getAllRecentTickets();
+
+  // Paginate ticket history
+  const totalTicketHistory = allRecentTickets.length;
+  const totalTicketHistoryPages = Math.ceil(totalTicketHistory / ticketHistoryPerPage);
+  const ticketHistoryStartIndex = (ticketHistoryPage - 1) * ticketHistoryPerPage;
+  const ticketHistoryEndIndex = ticketHistoryStartIndex + ticketHistoryPerPage;
+  const paginatedTicketHistory = allRecentTickets.slice(ticketHistoryStartIndex, ticketHistoryEndIndex);
 
   // Simulated audit logs (in production, this would come from a dedicated audit log table)
   const generateAuditLogs = () => {
     const logs: any[] = [];
-    const recentTickets = getRecentTickets().slice(0, 20);
+    const recentTickets = allRecentTickets.slice(0, 20);
 
     recentTickets.forEach((ticket: any) => {
       // Creation log
@@ -246,7 +283,14 @@ export default function ReportsPage() {
     return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   };
 
-  const auditLogs = generateAuditLogs();
+  const allAuditLogs = generateAuditLogs();
+
+  // Paginate audit logs
+  const totalAuditLogs = allAuditLogs.length;
+  const totalAuditPages = Math.ceil(totalAuditLogs / auditLogsPerPage);
+  const startIndex = (auditLogsPage - 1) * auditLogsPerPage;
+  const endIndex = startIndex + auditLogsPerPage;
+  const paginatedAuditLogs = allAuditLogs.slice(startIndex, endIndex);
 
   // Prepare chart data
   const statusChartData = [
@@ -258,10 +302,10 @@ export default function ReportsPage() {
   ].filter(item => item.value > 0);
 
   const priorityChartData = [
-    { name: 'Urgent', value: priorityBreakdown.urgent || 0, color: '#ef4444' },
-    { name: 'High', value: priorityBreakdown.high || 0, color: '#f97316' },
-    { name: 'Medium', value: priorityBreakdown.medium || 0, color: '#eab308' },
-    { name: 'Low', value: priorityBreakdown.low || 0, color: '#3b82f6' },
+    { name: 'Urgent', value: priorityBreakdown.urgent || 0, color: getPriorityChartColor('urgent') },
+    { name: 'High', value: priorityBreakdown.high || 0, color: getPriorityChartColor('high') },
+    { name: 'Medium', value: priorityBreakdown.medium || 0, color: getPriorityChartColor('medium') },
+    { name: 'Low', value: priorityBreakdown.low || 0, color: getPriorityChartColor('low') },
   ].filter(item => item.value > 0);
 
   // Calculate daily trend data for the selected date range
@@ -387,11 +431,21 @@ export default function ReportsPage() {
   const sourceDistributionData = getSourceDistribution();
 
   const getStatusBadge = (status: string) => {
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.new;
+    const colors = getStatusColor(status);
     return (
-      <Badge variant="outline" className="gap-1">
-        <span className={cn('h-2 w-2 rounded-full', config.color)} />
-        {config.label}
+      <Badge variant={`status-${status.toLowerCase()}` as any} className="gap-1.5">
+        <span className={cn('h-2 w-2 rounded-full', colors.dot)} />
+        {getStatusLabel(status)}
+      </Badge>
+    );
+  };
+
+  const getPriorityBadge = (priority: string) => {
+    const colors = getPriorityColor(priority);
+    return (
+      <Badge variant={`priority-${priority.toLowerCase()}` as any} className="gap-1.5">
+        <span className={cn('h-2 w-2 rounded-full', colors.dot)} />
+        {getPriorityLabel(priority)}
       </Badge>
     );
   };
@@ -511,7 +565,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {clientsData?.length || 0}
+              {totalClients}
             </div>
             <p className="text-xs text-muted-foreground">Registered clients</p>
           </CardContent>
@@ -676,28 +730,88 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
 
+          {/* Agent Performance Metrics */}
           <Card>
             <CardHeader>
-              <CardTitle>Team Overview</CardTitle>
-              <CardDescription>Agent and customer statistics</CardDescription>
+              <CardTitle>Agent Performance</CardTitle>
+              <CardDescription>Resolved tickets per agent</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="flex flex-col">
-                  <span className="text-sm text-muted-foreground">Total Agents</span>
-                  <span className="text-2xl font-bold">{agentsData?.length || 0}</span>
+              {isLoadingTickets ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-sm text-muted-foreground">Active Agents</span>
-                  <span className="text-2xl font-bold">
-                    {agentsData?.filter((u: any) => u.is_active).length || 0}
-                  </span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm text-muted-foreground">Total Customers</span>
-                  <span className="text-2xl font-bold">{clientsData?.length || 0}</span>
-                </div>
-              </div>
+              ) : (() => {
+                // Calculate agent performance
+                const agentPerformance: Record<string, { name: string; resolved: number; total: number }> = {};
+
+                filteredTickets?.forEach((ticket: any) => {
+                  const agentId = ticket.assigned_agent_id;
+                  if (agentId) {
+                    if (!agentPerformance[agentId]) {
+                      const agentName = getAgentNameFromTicket(ticket);
+                      agentPerformance[agentId] = {
+                        name: agentName !== 'Unassigned' ? agentName : `Agent ${agentId.substring(0, 8)}`,
+                        resolved: 0,
+                        total: 0
+                      };
+                    }
+                    agentPerformance[agentId].total += 1;
+                    if (ticket.status === 'resolved' || ticket.status === 'closed') {
+                      agentPerformance[agentId].resolved += 1;
+                    }
+                  }
+                });
+
+                const agentChartData = Object.values(agentPerformance)
+                  .sort((a, b) => b.resolved - a.resolved)
+                  .map(agent => ({
+                    name: agent.name,
+                    resolved: agent.resolved,
+                    total: agent.total,
+                    percentage: agent.total > 0 ? Math.round((agent.resolved / agent.total) * 100) : 0
+                  }));
+
+                return agentChartData.length > 0 ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={Math.max(300, agentChartData.length * 50)}>
+                      <BarChart data={agentChartData} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis type="number" className="text-xs" />
+                        <YAxis dataKey="name" type="category" width={120} className="text-xs" />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-background border rounded p-3 shadow-lg">
+                                  <p className="text-sm font-medium mb-2">{data.name}</p>
+                                  <p className="text-xs text-green-600">
+                                    Resolved: {data.resolved} tickets
+                                  </p>
+                                  <p className="text-xs text-blue-600">
+                                    Total Assigned: {data.total} tickets
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Resolution Rate: {data.percentage}%
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Legend />
+                        <Bar dataKey="resolved" fill="#22c55e" name="Resolved Tickets" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </>
+                ) : (
+                  <div className="flex justify-center items-center py-8 text-muted-foreground">
+                    No agent performance data available for selected date range
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
@@ -706,71 +820,178 @@ export default function ReportsPage() {
         <TabsContent value="history" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Recent Ticket History</CardTitle>
-              <CardDescription>
-                {dateRange?.from && dateRange?.to
-                  ? `Tickets from ${format(dateRange.from, 'MMM d, yyyy')} to ${format(dateRange.to, 'MMM d, yyyy')}`
-                  : dateRange?.from
-                  ? `Tickets from ${format(dateRange.from, 'MMM d, yyyy')}`
-                  : 'All tickets'}
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Recent Ticket History</CardTitle>
+                  <CardDescription>
+                    {dateRange?.from && dateRange?.to
+                      ? `Tickets from ${format(dateRange.from, 'MMM d, yyyy')} to ${format(dateRange.to, 'MMM d, yyyy')}`
+                      : dateRange?.from
+                      ? `Tickets from ${format(dateRange.from, 'MMM d, yyyy')}`
+                      : 'All tickets'}
+                  </CardDescription>
+                </div>
+                <Select value={ticketHistoryPerPage.toString()} onValueChange={(value) => {
+                  setTicketHistoryPerPage(Number(value));
+                  setTicketHistoryPage(1);
+                }}>
+                  <SelectTrigger className="w-[100px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
               {isLoadingTickets ? (
                 <div className="flex justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>
-              ) : getRecentTickets().length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ticket</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Priority</TableHead>
-                      <TableHead>Assigned To</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Updated</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {getRecentTickets().map((ticket: any) => (
-                      <TableRow
-                        key={ticket.id}
-                        className="cursor-pointer hover:bg-accent/50"
-                        onClick={() => router.push(`/tickets/${ticket.id}`)}
-                      >
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{ticket.subject}</p>
-                            <p className="text-sm text-muted-foreground">#{ticket.ticket_number}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{ticket.client_name || 'Unknown'}</TableCell>
-                        <TableCell>{getStatusBadge(ticket.status)}</TableCell>
-                        <TableCell>
-                          <Badge variant={
-                            ticket.priority === 'urgent' ? 'destructive' :
-                            ticket.priority === 'high' ? 'warning' : 'default'
-                          }>
-                            {ticket.priority}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{ticket.assigned_agent_name || 'Unassigned'}</TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {ticket.created_at ? format(new Date(ticket.created_at), 'MMM d, yyyy') : '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {ticket.updated_at ? format(new Date(ticket.updated_at), 'MMM d, yyyy') : '-'}
-                          </div>
-                        </TableCell>
+              ) : paginatedTicketHistory.length > 0 ? (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticket</TableHead>
+                        <TableHead>Customer</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead>Assigned To</TableHead>
+                        <TableHead>Created</TableHead>
+                        <TableHead>Updated</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedTicketHistory.map((ticket: any) => (
+                        <TableRow
+                          key={ticket.id}
+                          className="cursor-pointer hover:bg-accent/50"
+                          onClick={() => router.push(`/tickets/${ticket.id}`)}
+                        >
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{ticket.subject}</p>
+                              <p className="text-sm text-muted-foreground">#{ticket.ticket_number}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{getClientNameFromTicket(ticket)}</TableCell>
+                          <TableCell>{getStatusBadge(ticket.status)}</TableCell>
+                          <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
+                          <TableCell>{getAgentNameFromTicket(ticket)}</TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              {ticket.created_at ? format(new Date(ticket.created_at), 'MMM d, yyyy') : '-'}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              {ticket.updated_at ? format(new Date(ticket.updated_at), 'MMM d, yyyy') : '-'}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+
+                  {/* Pagination */}
+                  {totalTicketHistoryPages > 1 && (
+                    <div className="flex items-center justify-between pt-4 mt-4 border-t">
+                      <p className="text-sm text-muted-foreground">
+                        Showing {ticketHistoryStartIndex + 1} to {Math.min(ticketHistoryEndIndex, totalTicketHistory)} of {totalTicketHistory} tickets
+                      </p>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setTicketHistoryPage(p => Math.max(1, p - 1))}
+                          disabled={ticketHistoryPage === 1}
+                          className="gap-1"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </Button>
+
+                        {/* Page Numbers */}
+                        <div className="flex items-center gap-1 mx-2">
+                          {(() => {
+                            const pages = [];
+                            const maxVisiblePages = 5;
+
+                            if (totalTicketHistoryPages <= maxVisiblePages) {
+                              // Show all pages if total is small
+                              for (let i = 1; i <= totalTicketHistoryPages; i++) {
+                                pages.push(i);
+                              }
+                            } else {
+                              // Smart pagination logic
+                              if (ticketHistoryPage <= 3) {
+                                // Near the beginning
+                                for (let i = 1; i <= 4; i++) {
+                                  pages.push(i);
+                                }
+                                pages.push('...');
+                                pages.push(totalTicketHistoryPages);
+                              } else if (ticketHistoryPage >= totalTicketHistoryPages - 2) {
+                                // Near the end
+                                pages.push(1);
+                                pages.push('...');
+                                for (let i = totalTicketHistoryPages - 3; i <= totalTicketHistoryPages; i++) {
+                                  pages.push(i);
+                                }
+                              } else {
+                                // In the middle
+                                pages.push(1);
+                                pages.push('...');
+                                pages.push(ticketHistoryPage - 1);
+                                pages.push(ticketHistoryPage);
+                                pages.push(ticketHistoryPage + 1);
+                                pages.push('...');
+                                pages.push(totalTicketHistoryPages);
+                              }
+                            }
+
+                            return pages.map((page, index) => {
+                              if (page === '...') {
+                                return (
+                                  <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">
+                                    ...
+                                  </span>
+                                );
+                              }
+                              return (
+                                <Button
+                                  key={page}
+                                  variant={ticketHistoryPage === page ? 'default' : 'outline'}
+                                  size="sm"
+                                  onClick={() => setTicketHistoryPage(page as number)}
+                                  className="w-8 h-8 p-0"
+                                >
+                                  {page}
+                                </Button>
+                              );
+                            });
+                          })()}
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setTicketHistoryPage(p => Math.min(totalTicketHistoryPages, p + 1))}
+                          disabled={ticketHistoryPage === totalTicketHistoryPages}
+                          className="gap-1"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   No tickets found in the selected time range
@@ -784,43 +1005,157 @@ export default function ReportsPage() {
         <TabsContent value="audit" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>System Audit Logs</CardTitle>
-              <CardDescription>
-                Recent system activities and changes
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>System Audit Logs</CardTitle>
+                  <CardDescription>
+                    Recent system activities and changes
+                  </CardDescription>
+                </div>
+                <Select value={auditLogsPerPage.toString()} onValueChange={(value) => {
+                  setAuditLogsPerPage(Number(value));
+                  setAuditLogsPage(1);
+                }}>
+                  <SelectTrigger className="w-[100px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
               {isLoadingTickets ? (
                 <div className="flex justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>
-              ) : auditLogs.length > 0 ? (
-                <div className="space-y-4">
-                  {auditLogs.map((log: any) => {
-                    const Icon = actionIcons[log.action] || Activity;
-                    return (
-                      <div key={log.id} className="flex items-start gap-4 pb-4 border-b last:border-0">
-                        <div className="rounded-full bg-accent p-2">
-                          <Icon className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-medium">{log.description}</p>
-                            <span className="text-xs text-muted-foreground">
-                              {log.timestamp ? format(new Date(log.timestamp), 'MMM d, HH:mm') : '-'}
-                            </span>
+              ) : paginatedAuditLogs.length > 0 ? (
+                <>
+                  <div className="space-y-4">
+                    {paginatedAuditLogs.map((log: any) => {
+                      const Icon = actionIcons[log.action] || Activity;
+                      return (
+                        <div key={log.id} className="flex items-start gap-4 pb-4 border-b last:border-0">
+                          <div className="rounded-full bg-accent p-2">
+                            <Icon className="h-4 w-4 text-muted-foreground" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs">
-                              {log.action.replace('_', ' ')}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">by {log.user_name}</span>
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium">{log.description}</p>
+                              <span className="text-xs text-muted-foreground">
+                                {log.timestamp ? format(new Date(log.timestamp), 'MMM d, HH:mm') : '-'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {log.action.replace('_', ' ')}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">by {log.user_name}</span>
+                            </div>
                           </div>
                         </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Pagination */}
+                  {totalAuditPages > 1 && (
+                    <div className="flex items-center justify-between pt-4 mt-4 border-t">
+                      <p className="text-sm text-muted-foreground">
+                        Showing {startIndex + 1} to {Math.min(endIndex, totalAuditLogs)} of {totalAuditLogs} logs
+                      </p>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAuditLogsPage(p => Math.max(1, p - 1))}
+                          disabled={auditLogsPage === 1}
+                          className="gap-1"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </Button>
+
+                        {/* Page Numbers */}
+                        <div className="flex items-center gap-1 mx-2">
+                          {(() => {
+                            const pages = [];
+                            const maxVisiblePages = 5;
+
+                            if (totalAuditPages <= maxVisiblePages) {
+                              // Show all pages if total is small
+                              for (let i = 1; i <= totalAuditPages; i++) {
+                                pages.push(i);
+                              }
+                            } else {
+                              // Smart pagination logic
+                              if (auditLogsPage <= 3) {
+                                // Near the beginning
+                                for (let i = 1; i <= 4; i++) {
+                                  pages.push(i);
+                                }
+                                pages.push('...');
+                                pages.push(totalAuditPages);
+                              } else if (auditLogsPage >= totalAuditPages - 2) {
+                                // Near the end
+                                pages.push(1);
+                                pages.push('...');
+                                for (let i = totalAuditPages - 3; i <= totalAuditPages; i++) {
+                                  pages.push(i);
+                                }
+                              } else {
+                                // In the middle
+                                pages.push(1);
+                                pages.push('...');
+                                pages.push(auditLogsPage - 1);
+                                pages.push(auditLogsPage);
+                                pages.push(auditLogsPage + 1);
+                                pages.push('...');
+                                pages.push(totalAuditPages);
+                              }
+                            }
+
+                            return pages.map((page, index) => {
+                              if (page === '...') {
+                                return (
+                                  <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">
+                                    ...
+                                  </span>
+                                );
+                              }
+                              return (
+                                <Button
+                                  key={page}
+                                  variant={auditLogsPage === page ? 'default' : 'outline'}
+                                  size="sm"
+                                  onClick={() => setAuditLogsPage(page as number)}
+                                  className="w-8 h-8 p-0"
+                                >
+                                  {page}
+                                </Button>
+                              );
+                            });
+                          })()}
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAuditLogsPage(p => Math.min(totalAuditPages, p + 1))}
+                          disabled={auditLogsPage === totalAuditPages}
+                          className="gap-1"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   No audit logs available

@@ -276,6 +276,67 @@ services:
         config:
           allowed_payload_size: 25  # 25MB for email attachments
 
+  # AI Integration Service - Protected endpoints
+  - name: ai-integration-service
+    url: http://ai-integration-service:8006
+    connect_timeout: 15000
+    write_timeout: 60000  # Longer timeout for AI processing
+    read_timeout: 60000
+    retries: 2
+    routes:
+      - name: ai-process-routes
+        paths:
+          - /api/v1/process
+          - /api/v1/configurations
+          - /api/v1/providers
+          - /api/v1/monitoring
+          - /api/v1/features
+          - /api/v1/queue
+        strip_path: false
+        preserve_host: true
+      - name: ai-webhook-routes
+        paths:
+          - /api/v1/webhooks
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "http://localhost:3000"
+            - "https://localhost:3000"
+            - "http://127.0.0.1:3000"
+            - "*"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - OPTIONS
+            - HEAD
+          headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-Type
+            - Authorization
+            - X-Requested-With
+            - X-CSRF-Token
+          exposed_headers:
+            - X-Request-ID
+          credentials: true
+          max_age: 3600
+      - name: rate-limiting
+        config:
+          minute: 30  # Lower limit for AI operations
+          hour: 500
+          policy: local
+          hide_client_headers: false
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 5
+
   # Health Check Service - Public endpoint
   - name: health-service
     url: http://localhost:8000

@@ -51,6 +51,29 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         $router->post('callback/{jobId}', 'WebhookController@handleCallback');
     });
 
+    // AI Processing Requests (Public - accessible from other services)
+    $router->group(['prefix' => 'process'], function () use ($router) {
+
+        // Auto-write for rich text editor
+        $router->post('auto-write', 'ProcessingController@autoWrite');
+
+        // Ticket Processing
+        $router->post('ticket/categorize', 'ProcessingController@categorizeTicket');
+        $router->post('ticket/prioritize', 'ProcessingController@prioritizeTicket');
+        $router->post('ticket/suggest-response', 'ProcessingController@suggestResponse');
+        $router->post('ticket/analyze-sentiment', 'ProcessingController@analyzeSentiment');
+        $router->post('ticket/extract-entities', 'ProcessingController@extractEntities');
+        $router->post('ticket/summarize', 'ProcessingController@summarizeTicket');
+
+        // Batch Processing
+        $router->post('batch', 'ProcessingController@processBatch');
+
+        // Knowledge Base
+        $router->post('kb/generate-article', 'ProcessingController@generateKBArticle');
+        $router->post('kb/improve-article', 'ProcessingController@improveKBArticle');
+        $router->post('kb/suggest-articles', 'ProcessingController@suggestRelatedArticles');
+    });
+
     // Protected routes (authentication required)
     $router->group(['middleware' => 'auth'], function () use ($router) {
 
@@ -62,26 +85,6 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
             $router->put('{id}', 'AIConfigurationController@update');
             $router->delete('{id}', 'AIConfigurationController@destroy');
             $router->post('{id}/test-connection', 'AIConfigurationController@testConnection');
-        });
-
-        // AI Processing Requests
-        $router->group(['prefix' => 'process'], function () use ($router) {
-
-            // Ticket Processing
-            $router->post('ticket/categorize', 'ProcessingController@categorizeTicket');
-            $router->post('ticket/prioritize', 'ProcessingController@prioritizeTicket');
-            $router->post('ticket/suggest-response', 'ProcessingController@suggestResponse');
-            $router->post('ticket/analyze-sentiment', 'ProcessingController@analyzeSentiment');
-            $router->post('ticket/extract-entities', 'ProcessingController@extractEntities');
-            $router->post('ticket/summarize', 'ProcessingController@summarizeTicket');
-
-            // Batch Processing
-            $router->post('batch', 'ProcessingController@processBatch');
-
-            // Knowledge Base
-            $router->post('kb/generate-article', 'ProcessingController@generateKBArticle');
-            $router->post('kb/improve-article', 'ProcessingController@improveKBArticle');
-            $router->post('kb/suggest-articles', 'ProcessingController@suggestRelatedArticles');
         });
 
         // Queue Management

@@ -437,8 +437,40 @@ class PdfReportGenerator
                     </div>
                 </div>
 
+                <!-- Agent Performance Section -->
+                <?php if (!empty($data['agent_performance'])): ?>
+                <div class="table-card" style="page-break-inside: avoid; margin-top: 16px;">
+                    <div class="chart-header">
+                        <div class="chart-title">Agent Performance</div>
+                        <div class="chart-description">Resolved tickets per agent</div>
+                    </div>
+                    <table style="margin-top: 16px;">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left;">Agent Name</th>
+                                <th style="text-align: center;">Resolved</th>
+                                <th style="text-align: center;">Total Assigned</th>
+                                <th style="text-align: center;">Resolution Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($data['agent_performance'] as $agent): ?>
+                            <tr>
+                                <td style="font-weight: 600;"><?= htmlspecialchars($agent['name']) ?></td>
+                                <td style="text-align: center; <?= $agent['resolved'] >= 10 ? 'color: #22c55e; font-weight: 700;' : '' ?>">
+                                    <?= $agent['resolved'] ?>
+                                </td>
+                                <td style="text-align: center;"><?= $agent['total'] ?></td>
+                                <td style="text-align: center;"><?= $agent['percentage'] ?>%</td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php endif; ?>
+
                 <!-- Team Overview Section -->
-                <div class="table-card" style="page-break-inside: avoid;">
+                <div class="table-card" style="page-break-inside: avoid; margin-top: 16px;">
                     <div class="chart-header">
                         <div class="chart-title">Team Overview</div>
                         <div class="chart-description">Agent and customer statistics</div>

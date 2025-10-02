@@ -33,6 +33,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { getStatusColor, getStatusLabel, getPriorityColor, getPriorityLabel } from '@/lib/colors';
+import { useAuth } from '@/lib/auth';
 
 const statusConfig = {
   new: { label: 'New', color: 'bg-blue-500', icon: AlertCircle },
@@ -44,16 +46,8 @@ const statusConfig = {
   cancelled: { label: 'Cancelled', color: 'bg-red-500', icon: XCircle },
 };
 
-const priorityConfig = {
-  low: { label: 'Low', color: 'default' },
-  medium: { label: 'Medium', color: 'secondary' },
-  high: { label: 'High', color: 'warning' },
-  urgent: { label: 'Urgent', color: 'destructive' },
-};
-
 const roleConfig = {
   admin: { label: 'Administrator', color: 'destructive', icon: Shield },
-  supervisor: { label: 'Supervisor', color: 'warning', icon: Shield },
   agent: { label: 'Agent', color: 'default', icon: UserIcon },
 };
 
@@ -61,6 +55,10 @@ export default function UserProfilePage() {
   const params = useParams();
   const router = useRouter();
   const userId = params.id as string;
+  const { user: currentUser } = useAuth();
+
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === 'admin';
 
   // Fetch user data
   const { data: user, isLoading: isLoadingUser } = useQuery({
@@ -72,14 +70,27 @@ export default function UserProfilePage() {
   });
 
   // Fetch assigned tickets for this user
-  const { data: tickets, isLoading: isLoadingTickets } = useQuery({
+  const { data: ticketsData, isLoading: isLoadingTickets } = useQuery({
     queryKey: ['user-tickets', userId],
     queryFn: async () => {
-      const response = await api.tickets.list({ assigned_to: userId });
+      const response = await api.tickets.list({ assigned_agent_id: userId, limit: 1000 });
+      // Handle paginated response
+      if (response.data?.success && response.data?.data) {
+        return response.data.data;
+      }
       return response.data?.data || response.data || [];
     },
     enabled: !!userId,
   });
+
+  const tickets = ticketsData || [];
+
+  // Calculate ticket statistics from assigned tickets only
+  const ticketStats = {
+    total: tickets.length,
+    open: tickets.filter((t: any) => ['new', 'open', 'pending', 'on_hold'].includes(t.status)).length,
+    resolved: tickets.filter((t: any) => t.status === 'resolved').length,
+  };
 
   const getStatusBadge = (status: string) => {
     const config = statusConfig[status as keyof typeof statusConfig];
@@ -92,10 +103,19 @@ export default function UserProfilePage() {
   };
 
   const getPriorityBadge = (priority: string) => {
-    const config = priorityConfig[priority as keyof typeof priorityConfig];
+    const colors = getPriorityColor(priority);
     return (
-      <Badge variant={config.color as any}>
-        {config.label}
+      <Badge
+        variant="outline"
+        className={cn(
+          'border-transparent',
+          colors.bg,
+          colors.bgDark,
+          colors.text,
+          colors.textDark
+        )}
+      >
+        {getPriorityLabel(priority)}
       </Badge>
     );
   };
@@ -104,7 +124,7 @@ export default function UserProfilePage() {
     const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.agent;
     const Icon = config.icon;
     return (
-      <Badge variant={config.color as any} className="gap-1">
+      <Badge variant={`role-${role}` as any} className="gap-1">
         <Icon className="h-3 w-3" />
         {config.label}
       </Badge>
@@ -123,6 +143,24 @@ export default function UserProfilePage() {
     );
   }
 
+  // Redirect agents to team page if they try to access user profiles
+  if (!isAdmin) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <Shield className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+          <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
+          <p className="text-muted-foreground mb-4">
+            You don't have permission to view user profiles.
+          </p>
+          <Button onClick={() => router.push('/team')}>
+            Back to Team
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -136,14 +174,6 @@ export default function UserProfilePage() {
     );
   }
 
-  // Calculate ticket statistics
-  const openTickets = tickets?.filter((t: any) =>
-    ['new', 'open', 'pending', 'on_hold'].includes(t.status)
-  ).length || 0;
-
-  const closedTickets = tickets?.filter((t: any) =>
-    ['resolved', 'closed'].includes(t.status)
-  ).length || 0;
 
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
@@ -219,7 +249,7 @@ export default function UserProfilePage() {
             <Ticket className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{tickets?.length || 0}</div>
+            <div className="text-2xl font-bold">{ticketStats.total}</div>
             <p className="text-xs text-muted-foreground">Assigned tickets</p>
           </CardContent>
         </Card>
@@ -229,7 +259,7 @@ export default function UserProfilePage() {
             <AlertCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{openTickets}</div>
+            <div className="text-2xl font-bold">{ticketStats.open}</div>
             <p className="text-xs text-muted-foreground">Requires attention</p>
           </CardContent>
         </Card>
@@ -239,7 +269,7 @@ export default function UserProfilePage() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{closedTickets}</div>
+            <div className="text-2xl font-bold">{ticketStats.resolved}</div>
             <p className="text-xs text-muted-foreground">Successfully resolved</p>
           </CardContent>
         </Card>
@@ -289,7 +319,11 @@ export default function UserProfilePage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {ticket.client_name || 'Unknown'}
+                          <div className="flex items-center gap-2">
+                            {ticket.client?.name || ticket.client_name || (
+                              <span className="text-muted-foreground">Unknown Customer</span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                         <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>

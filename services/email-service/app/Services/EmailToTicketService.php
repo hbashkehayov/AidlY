@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmailQueue;
 use App\Models\EmailAccount;
+use App\Models\BlockedEmailAttempt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -305,6 +306,45 @@ class EmailToTicketService
         $clientId = $client ? $client['id'] : null;
         $isNewClient = !$client;
 
+        // CHECK: If client is blocked, send notification and reject ticket creation
+        if ($client && isset($client['is_blocked']) && $client['is_blocked'] === true) {
+            // Send auto-reply notification to blocked sender
+            $notificationSent = $this->sendBlockedSenderNotification($email->from_address, $email->subject);
+
+            // Log blocked attempt to database
+            $this->logBlockedEmailAttempt([
+                'client_id' => $client['id'],
+                'email_address' => $email->from_address,
+                'client_name' => $client['name'] ?? null,
+                'subject' => $email->subject,
+                'email_queue_id' => $email->id,
+                'message_id' => $email->message_id,
+                'notification_sent' => $notificationSent,
+                'block_reason' => 'Client is blocked in system',
+                'metadata' => [
+                    'action' => 'new_ticket_blocked',
+                    'from_address' => $email->from_address,
+                    'to_addresses' => $email->to_addresses,
+                    'email_account_id' => $email->email_account_id,
+                ]
+            ]);
+
+            // Mark email as processed (no ticket created)
+            $email->markAsProcessed(null);
+
+            Log::warning("Blocked email from blocked client - Auto-reply sent", [
+                'client_id' => $client['id'],
+                'client_email' => $email->from_address,
+                'client_name' => $client['name'] ?? 'Unknown',
+                'subject' => $email->subject,
+                'email_id' => $email->id,
+                'blocked_reason' => 'Client is blocked in system',
+                'notification_sent' => $notificationSent
+            ]);
+
+            throw new \Exception("Email sender is blocked: " . $email->from_address);
+        }
+
         // Prepare description - prefer HTML body over plain text, with fallback
         $description = $email->body_html ?: $email->body_plain ?: $email->content;
 
@@ -399,6 +439,48 @@ class EmailToTicketService
      */
     protected function addCommentToTicket(string $ticketId, EmailQueue $email): array
     {
+        // CHECK: If client is blocked, send notification and reject comment creation
+        $client = $this->findClient($email->from_address);
+        if ($client && isset($client['is_blocked']) && $client['is_blocked'] === true) {
+            // Send auto-reply notification to blocked sender
+            $notificationSent = $this->sendBlockedSenderNotification($email->from_address, $email->subject);
+
+            // Log blocked attempt to database
+            $this->logBlockedEmailAttempt([
+                'client_id' => $client['id'],
+                'email_address' => $email->from_address,
+                'client_name' => $client['name'] ?? null,
+                'subject' => $email->subject,
+                'email_queue_id' => $email->id,
+                'message_id' => $email->message_id,
+                'notification_sent' => $notificationSent,
+                'block_reason' => 'Client is blocked - Reply to ticket rejected',
+                'metadata' => [
+                    'action' => 'ticket_reply_blocked',
+                    'ticket_id' => $ticketId,
+                    'from_address' => $email->from_address,
+                    'to_addresses' => $email->to_addresses,
+                    'email_account_id' => $email->email_account_id,
+                ]
+            ]);
+
+            // Mark email as processed (no comment created)
+            $email->markAsProcessed($ticketId);
+
+            Log::warning("Blocked email reply from blocked client - Auto-reply sent", [
+                'client_id' => $client['id'],
+                'client_email' => $email->from_address,
+                'client_name' => $client['name'] ?? 'Unknown',
+                'ticket_id' => $ticketId,
+                'subject' => $email->subject,
+                'email_id' => $email->id,
+                'blocked_reason' => 'Client is blocked - Reply rejected',
+                'notification_sent' => $notificationSent
+            ]);
+
+            throw new \Exception("Email sender is blocked - Reply rejected: " . $email->from_address);
+        }
+
         // Prefer HTML body over plain text for comments as well
         $commentData = [
             'content' => $email->body_html ?: $email->body_plain ?: $email->content,
@@ -614,5 +696,262 @@ class EmailToTicketService
                 ]);
             }
         }
+    }
+
+    /**
+     * Send notification email to blocked sender
+     *
+     * @param string $recipientEmail
+     * @param string $originalSubject
+     * @return bool Success status
+     */
+    protected function sendBlockedSenderNotification(string $recipientEmail, string $originalSubject): bool
+    {
+        try {
+            // Get company/app name from env
+            $companyName = env('APP_NAME', 'AidlY Support');
+            $supportEmail = env('MAIL_FROM_ADDRESS', 'support@aidly.com');
+
+            // Prepare email content
+            $subject = "Message Delivery Failed - Account Restricted";
+
+            $htmlBody = $this->getBlockedSenderEmailTemplate($companyName, $originalSubject, $supportEmail);
+
+            $plainBody = $this->getBlockedSenderPlainText($companyName, $originalSubject, $supportEmail);
+
+            // Send email using Symfony Mailer
+            $mailer = app('mailer');
+
+            $message = (new \Symfony\Component\Mime\Email())
+                ->from(new \Symfony\Component\Mime\Address($supportEmail, $companyName))
+                ->to($recipientEmail)
+                ->subject($subject)
+                ->html($htmlBody)
+                ->text($plainBody);
+
+            $mailer->send($message);
+
+            Log::info("Sent blocked sender notification", [
+                'recipient' => $recipientEmail,
+                'subject' => $subject,
+                'original_subject' => $originalSubject
+            ]);
+
+            return true;
+
+        } catch (\Exception $e) {
+            // Log error but don't throw - we don't want to fail the entire process
+            Log::error("Failed to send blocked sender notification", [
+                'recipient' => $recipientEmail,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Log blocked email attempt to database
+     *
+     * @param array $data
+     * @return void
+     */
+    protected function logBlockedEmailAttempt(array $data): void
+    {
+        try {
+            BlockedEmailAttempt::create($data);
+
+            Log::debug("Logged blocked email attempt", [
+                'client_id' => $data['client_id'] ?? null,
+                'email_address' => $data['email_address'],
+                'subject' => $data['subject']
+            ]);
+        } catch (\Exception $e) {
+            // Log error but don't throw
+            Log::error("Failed to log blocked email attempt", [
+                'error' => $e->getMessage(),
+                'data' => $data
+            ]);
+        }
+    }
+
+    /**
+     * Get HTML email template for blocked sender notification
+     *
+     * @param string $companyName
+     * @param string $originalSubject
+     * @param string $supportEmail
+     * @return string
+     */
+    protected function getBlockedSenderEmailTemplate(string $companyName, string $originalSubject, string $supportEmail): string
+    {
+        return <<<HTML
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Delivery Failed</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); padding: 40px 40px 30px; border-radius: 8px 8px 0 0;">
+                            <table width="100%" cellpadding="0" cellspacing="0">
+                                <tr>
+                                    <td align="center">
+                                        <div style="background-color: rgba(255,255,255,0.2); border-radius: 50%; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+                                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="display: block; margin: 16px auto;">
+                                                <circle cx="12" cy="12" r="10"></circle>
+                                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                            </svg>
+                                        </div>
+                                        <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
+                                            Message Delivery Failed
+                                        </h1>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Body -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <div style="color: #374151; font-size: 16px; line-height: 24px;">
+                                <p style="margin: 0 0 20px;">
+                                    Your message could not be delivered to <strong>{$companyName}</strong> support team.
+                                </p>
+
+                                <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px 20px; margin: 24px 0; border-radius: 4px;">
+                                    <p style="margin: 0 0 8px; color: #991b1b; font-weight: 600; font-size: 14px;">
+                                        ⚠️ Account Restricted
+                                    </p>
+                                    <p style="margin: 0; color: #7f1d1d; font-size: 14px; line-height: 20px;">
+                                        Your account has been restricted from submitting support requests. This means we cannot process emails sent from your address.
+                                    </p>
+                                </div>
+
+                                <div style="background-color: #f9fafb; padding: 16px 20px; border-radius: 6px; margin: 24px 0;">
+                                    <p style="margin: 0 0 8px; font-weight: 600; font-size: 14px; color: #6b7280;">
+                                        Original Subject:
+                                    </p>
+                                    <p style="margin: 0; color: #1f2937; font-size: 14px;">
+                                        {$originalSubject}
+                                    </p>
+                                </div>
+
+                                <h3 style="color: #111827; font-size: 18px; font-weight: 600; margin: 32px 0 16px;">
+                                    Why was my message blocked?
+                                </h3>
+                                <p style="margin: 0 0 12px; color: #6b7280; font-size: 15px; line-height: 22px;">
+                                    Your account may have been restricted for one of the following reasons:
+                                </p>
+                                <ul style="margin: 12px 0 24px; padding-left: 24px; color: #6b7280; font-size: 15px; line-height: 22px;">
+                                    <li style="margin-bottom: 8px;">Violation of our terms of service or acceptable use policy</li>
+                                    <li style="margin-bottom: 8px;">Repeated abusive or inappropriate communications</li>
+                                    <li style="margin-bottom: 8px;">Outstanding payment or account issues</li>
+                                    <li style="margin-bottom: 8px;">Request from account administrator</li>
+                                </ul>
+
+                                <h3 style="color: #111827; font-size: 18px; font-weight: 600; margin: 32px 0 16px;">
+                                    What can I do?
+                                </h3>
+                                <p style="margin: 0 0 16px; color: #6b7280; font-size: 15px; line-height: 22px;">
+                                    If you believe this restriction was made in error or would like to discuss having it removed, please contact our account management team directly:
+                                </p>
+
+                                <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 20px; border-radius: 6px; margin: 24px 0;">
+                                    <p style="margin: 0 0 12px; color: #1e40af; font-size: 14px;">
+                                        <strong>📧 Email:</strong> <a href="mailto:{$supportEmail}" style="color: #2563eb; text-decoration: none;">{$supportEmail}</a>
+                                    </p>
+                                    <p style="margin: 0; color: #1e40af; font-size: 13px;">
+                                        Please include your account details and the reason you're contacting us.
+                                    </p>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f9fafb; padding: 24px 40px; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 13px; line-height: 18px; text-align: center;">
+                                This is an automated message from <strong>{$companyName}</strong>.<br>
+                                Please do not reply directly to this email.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+
+                <!-- Additional Notice -->
+                <table width="600" cellpadding="0" cellspacing="0" style="margin-top: 20px;">
+                    <tr>
+                        <td style="padding: 0 20px;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 18px; text-align: center;">
+                                © {$companyName}. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+HTML;
+    }
+
+    /**
+     * Get plain text version of blocked sender notification
+     *
+     * @param string $companyName
+     * @param string $originalSubject
+     * @param string $supportEmail
+     * @return string
+     */
+    protected function getBlockedSenderPlainText(string $companyName, string $originalSubject, string $supportEmail): string
+    {
+        return <<<TEXT
+MESSAGE DELIVERY FAILED
+=======================
+
+Your message could not be delivered to {$companyName} support team.
+
+ACCOUNT RESTRICTED
+------------------
+Your account has been restricted from submitting support requests. This means we cannot process emails sent from your address.
+
+Original Subject: {$originalSubject}
+
+WHY WAS MY MESSAGE BLOCKED?
+---------------------------
+Your account may have been restricted for one of the following reasons:
+
+• Violation of our terms of service or acceptable use policy
+• Repeated abusive or inappropriate communications
+• Outstanding payment or account issues
+• Request from account administrator
+
+WHAT CAN I DO?
+--------------
+If you believe this restriction was made in error or would like to discuss having it removed, please contact our account management team directly:
+
+Email: stu2101681026@uni-plovdiv.bg
+
+Please include your account details and the reason you're contacting us.
+
+---
+This is an automated message from {$companyName}.
+Please do not reply directly to this email.
+
+© {$companyName}. All rights reserved.
+TEXT;
     }
 }

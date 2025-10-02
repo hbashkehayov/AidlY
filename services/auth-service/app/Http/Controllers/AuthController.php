@@ -427,4 +427,52 @@ class AuthController extends Controller
             'message' => 'Password changed successfully'
         ]);
     }
+
+    /**
+     * Update profile for authenticated user
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateProfile(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|required|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $token = $this->jwtService->extractTokenFromHeader($request->header('Authorization'));
+        $user = $this->jwtService->getUserFromToken($token);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+
+        // Update profile fields
+        if ($request->has('name')) {
+            $user->name = $request->name;
+        }
+
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully',
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+            ]
+        ]);
+    }
 }

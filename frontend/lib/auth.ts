@@ -27,7 +27,7 @@ interface AuthState {
 
 export const useAuth = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       token: null,
       isAuthenticated: false,
@@ -59,8 +59,14 @@ export const useAuth = create<AuthState>()(
         } catch (error) {
           console.error('Logout error:', error);
         } finally {
+          // Clear auth data
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
+
+          // Reset appearance to defaults (but keep settings in localStorage for next login)
+          document.documentElement.setAttribute('data-font-size', 'medium');
+          // Theme will be reset by ThemeInitializer when user becomes null
+
           set({
             user: null,
             token: null,

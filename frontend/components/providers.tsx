@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
+import { ThemeInitializer } from './theme-initializer';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({
@@ -25,10 +26,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider
         attribute="class"
-        defaultTheme="light"
-        enableSystem={false}
+        defaultTheme="system"
+        enableSystem={true}
+        storageKey="theme-global"
         disableTransitionOnChange
       >
+        <ThemeInitializer />
         {children}
       </ThemeProvider>
     </QueryClientProvider>

@@ -12,7 +12,7 @@ INSERT INTO departments (id, name, description) VALUES
 -- Note: In production, use proper password hashing
 INSERT INTO users (id, email, password_hash, name, role, department_id, is_active, email_verified_at) VALUES
   ('550e8400-e29b-41d4-a716-446655440010', 'admin@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'Admin User', 'admin', '550e8400-e29b-41d4-a716-446655440004', true, NOW()),
-  ('550e8400-e29b-41d4-a716-446655440011', 'supervisor@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'John Supervisor', 'supervisor', '550e8400-e29b-41d4-a716-446655440001', true, NOW()),
+  ('550e8400-e29b-41d4-a716-446655440011', 'john.agent@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'John Agent', 'agent', '550e8400-e29b-41d4-a716-446655440001', true, NOW()),
   ('550e8400-e29b-41d4-a716-446655440012', 'agent1@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'Alice Agent', 'agent', '550e8400-e29b-41d4-a716-446655440001', true, NOW()),
   ('550e8400-e29b-41d4-a716-446655440013', 'agent2@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'Bob Agent', 'agent', '550e8400-e29b-41d4-a716-446655440002', true, NOW()),
   ('550e8400-e29b-41d4-a716-446655440014', 'agent3@aidly.com', '$2y$10$TKh8H1.PfQx37YgCzwiKb.KjNyWgaHb9cbcoQgdIVFlYg7B77UdFm', 'Charlie Agent', 'agent', '550e8400-e29b-41d4-a716-446655440003', true, NOW()),
@@ -53,23 +53,13 @@ INSERT INTO permissions (id, resource, action, description) VALUES
 -- Insert Role Permissions
 -- Admin has all permissions (implicitly handled in middleware)
 
--- Supervisor permissions
-INSERT INTO role_permissions (role, permission_id) VALUES
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440020'), -- tickets:create
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440021'), -- tickets:read
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440022'), -- tickets:update
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440024'), -- tickets:assign
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440026'), -- users:read
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440030'), -- clients:read
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440031'), -- clients:update
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440033'), -- reports:view
-  ('supervisor', '550e8400-e29b-41d4-a716-446655440034'); -- reports:export
-
--- Agent permissions
+-- Agent permissions (includes former supervisor permissions)
 INSERT INTO role_permissions (role, permission_id) VALUES
   ('agent', '550e8400-e29b-41d4-a716-446655440020'), -- tickets:create
   ('agent', '550e8400-e29b-41d4-a716-446655440021'), -- tickets:read
   ('agent', '550e8400-e29b-41d4-a716-446655440022'), -- tickets:update
+  ('agent', '550e8400-e29b-41d4-a716-446655440024'), -- tickets:assign
+  ('agent', '550e8400-e29b-41d4-a716-446655440026'), -- users:read
   ('agent', '550e8400-e29b-41d4-a716-446655440030'), -- clients:read
   ('agent', '550e8400-e29b-41d4-a716-446655440031'); -- clients:update
 

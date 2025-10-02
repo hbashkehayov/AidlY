@@ -7,6 +7,7 @@ const TICKET_API_URL = process.env.NEXT_PUBLIC_TICKET_API_URL || 'http://localho
 const CLIENT_API_URL = process.env.NEXT_PUBLIC_CLIENT_API_URL || 'http://localhost:8003/api/v1';
 const ANALYTICS_API_URL = process.env.NEXT_PUBLIC_ANALYTICS_API_URL || 'http://localhost:8007/api/v1';
 const NOTIFICATION_API_URL = process.env.NEXT_PUBLIC_NOTIFICATION_API_URL || 'http://localhost:8004/api/v1';
+const AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8006/api/v1';
 
 // Create axios instances for each service
 export const authApi = axios.create({
@@ -47,6 +48,13 @@ export const analyticsApi = axios.create({
 
 export const notificationApi = axios.create({
   baseURL: NOTIFICATION_API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+export const aiApi = axios.create({
+  baseURL: AI_API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -97,6 +105,7 @@ addAuthInterceptor(ticketApi);
 addAuthInterceptor(clientApi);
 addAuthInterceptor(analyticsApi);
 addAuthInterceptor(notificationApi);
+addAuthInterceptor(aiApi);
 
 // API Methods
 export const api = {
@@ -116,6 +125,10 @@ export const api = {
       authApi.post('/forgot-password', { email }),
     resetPassword: (token: string, password: string) =>
       authApi.post('/reset-password', { token, password }),
+    updateProfile: (data: { name?: string }) =>
+      authApi.put('/update-profile', data),
+    changePassword: (data: { current_password: string; new_password: string; new_password_confirmation: string }) =>
+      authApi.post('/change-password', data),
   },
 
   // Tickets - Use authenticated routes when token is available, public as fallback
@@ -218,7 +231,7 @@ export const api = {
       console.log('[API DEBUG] notifications.list - processedParams:', processedParams);
 
       // Admin can view all notifications
-      if (processedParams.view_all && (userRole === 'admin' || userRole === 'supervisor')) {
+      if (processedParams.view_all && userRole === 'admin') {
         return notificationApi.get('/notifications', {
           params: processedParams
         });
@@ -249,7 +262,7 @@ export const api = {
       const userRole = user?.role;
 
       // Admin can view all stats
-      if (viewAll && (userRole === 'admin' || userRole === 'supervisor')) {
+      if (viewAll && userRole === 'admin') {
         return notificationApi.get('/notifications/stats', {
           params: {
             notifiable_type: 'user',
@@ -429,6 +442,50 @@ export const api = {
         analyticsApi.get('/dashboard/agent-performance', { params }),
     },
 
+    // Agent-specific dashboard
+    agent: {
+      queue: (agentId?: string) => {
+        const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+        const id = agentId || user?.id;
+        console.log('[API] agent.queue - user:', user, 'id:', id);
+        return analyticsApi.get('/dashboard/agent-queue', {
+          params: { agent_id: id }
+        });
+      },
+      stats: (agentId?: string) => {
+        const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+        const id = agentId || user?.id;
+        console.log('[API] agent.stats - user:', user, 'id:', id);
+        return analyticsApi.get('/dashboard/agent-stats', {
+          params: { agent_id: id }
+        });
+      },
+      activity: (agentId?: string, limit?: number) => {
+        const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+        const id = agentId || user?.id;
+        console.log('[API] agent.activity - user:', user, 'id:', id);
+        return analyticsApi.get('/dashboard/agent-activity', {
+          params: { agent_id: id, limit }
+        });
+      },
+      productivity: (agentId?: string) => {
+        const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+        const id = agentId || user?.id;
+        console.log('[API] agent.productivity - user:', user, 'id:', id);
+        return analyticsApi.get('/dashboard/agent-productivity', {
+          params: { agent_id: id }
+        });
+      },
+      replies: (agentId?: string, limit?: number) => {
+        const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+        const id = agentId || user?.id;
+        console.log('[API] agent.replies - user:', user, 'id:', id);
+        return analyticsApi.get('/dashboard/agent-replies', {
+          params: { agent_id: id, limit }
+        });
+      },
+    },
+
     // Reports
     reports: {
       list: (params?: any) =>
@@ -501,6 +558,27 @@ export const api = {
       clientMetrics: (params?: any) =>
         analyticsApi.get('/metrics/client-metrics', { params }),
     },
+  },
+
+  // AI Integration
+  ai: {
+    autoWrite: (data: {
+      ticket_id: string;
+      context?: string;
+      tone?: 'professional' | 'friendly' | 'empathetic' | 'formal';
+      length?: 'short' | 'medium' | 'long';
+    }) =>
+      aiApi.post('/process/auto-write', data),
+    categorize: (data: { subject: string; description: string; categories?: string[] }) =>
+      aiApi.post('/process/ticket/categorize', data),
+    prioritize: (data: { subject: string; description: string }) =>
+      aiApi.post('/process/ticket/prioritize', data),
+    suggestResponse: (data: { ticket_id: string; ticket: any; context?: any }) =>
+      aiApi.post('/process/ticket/suggest-response', data),
+    analyzeSentiment: (data: { text: string }) =>
+      aiApi.post('/process/ticket/analyze-sentiment', data),
+    summarize: (data: { text: string }) =>
+      aiApi.post('/process/ticket/summarize', data),
   },
 };
 

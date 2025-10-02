@@ -81,13 +81,26 @@ export default function CustomerProfilePage() {
   });
 
   // Fetch customer tickets
-  const { data: tickets, isLoading: isLoadingTickets } = useQuery({
+  const { data: ticketsData, isLoading: isLoadingTickets } = useQuery({
     queryKey: ['customer-tickets', customerId],
     queryFn: async () => {
-      const response = await api.tickets.list({ client_id: customerId });
+      const response = await api.tickets.list({ client_id: customerId, limit: 1000 });
+      // Handle paginated response
+      if (response.data?.success && response.data?.data) {
+        return response.data.data;
+      }
       return response.data?.data || response.data || [];
     },
   });
+
+  const tickets = ticketsData || [];
+
+  // Calculate ticket counts from actual tickets
+  const ticketStats = {
+    total: tickets.length,
+    open: tickets.filter((t: any) => ['new', 'open', 'pending'].includes(t.status)).length,
+    resolved: tickets.filter((t: any) => t.status === 'resolved').length,
+  };
 
   const getStatusBadge = (status: string) => {
     const config = statusConfig[status as keyof typeof statusConfig];
@@ -266,7 +279,7 @@ export default function CustomerProfilePage() {
             <Ticket className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{customer.total_tickets || 0}</div>
+            <div className="text-2xl font-bold">{ticketStats.total}</div>
             <p className="text-xs text-muted-foreground">All time</p>
           </CardContent>
         </Card>
@@ -276,18 +289,18 @@ export default function CustomerProfilePage() {
             <AlertCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{customer.open_tickets || 0}</div>
+            <div className="text-2xl font-bold">{ticketStats.open}</div>
             <p className="text-xs text-muted-foreground">Requires attention</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Closed Tickets</CardTitle>
+            <CardTitle className="text-sm font-medium">Resolved Tickets</CardTitle>
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{customer.closed_tickets || 0}</div>
-            <p className="text-xs text-muted-foreground">Resolved</p>
+            <div className="text-2xl font-bold">{ticketStats.resolved}</div>
+            <p className="text-xs text-muted-foreground">Successfully resolved</p>
           </CardContent>
         </Card>
         <Card>

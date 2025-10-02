@@ -63,6 +63,7 @@ $app->configure('app');
 $app->configure('database');
 $app->configure('cache');
 $app->configure('queue');
+$app->configure('mail');
 
 /*
 |--------------------------------------------------------------------------
@@ -95,6 +96,7 @@ $app->configure('queue');
 */
 
 $app->register(App\Providers\AppServiceProvider::class);
+$app->register(App\Providers\MailServiceProvider::class);
 // $app->register(App\Providers\AuthServiceProvider::class);
 // $app->register(App\Providers\EventServiceProvider::class);
 

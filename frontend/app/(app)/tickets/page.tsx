@@ -61,20 +61,15 @@ import {
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { getStatusColor, getStatusLabel, getPriorityColor, getPriorityLabel } from '@/lib/colors';
 
 const statusConfig = {
-  open: { label: 'Open', color: 'bg-yellow-500', icon: Clock },
-  pending: { label: 'Pending', color: 'bg-orange-500', icon: Clock },
-  resolved: { label: 'Resolved', color: 'bg-green-500', icon: CheckCircle },
-  closed: { label: 'Closed', color: 'bg-gray-400', icon: XCircle },
-  cancelled: { label: 'Cancelled', color: 'bg-red-500', icon: XCircle },
-};
-
-const priorityConfig = {
-  low: { label: 'Low', color: 'default' },
-  medium: { label: 'Medium', color: 'secondary' },
-  high: { label: 'High', color: 'warning' },
-  urgent: { label: 'Urgent', color: 'destructive' },
+  open: { label: 'Open', icon: Clock },
+  pending: { label: 'Pending', icon: Clock },
+  resolved: { label: 'Resolved', icon: CheckCircle },
+  closed: { label: 'Closed', icon: XCircle },
+  cancelled: { label: 'Cancelled', icon: XCircle },
+  new: { label: 'New', icon: AlertCircle },
 };
 
 // Real tickets data now comes from the API
@@ -88,8 +83,12 @@ export default function TicketsPage() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
+  // Get current user to check role
+  const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+  const isAgent = user?.role === 'agent';
+
   const { data: tickets, isLoading } = useQuery({
-    queryKey: ['tickets', selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage],
+    queryKey: ['tickets', selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage, isAgent ? user?.id : null],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedStatus !== 'all') params.append('status', selectedStatus);
@@ -97,6 +96,11 @@ export default function TicketsPage() {
       if (searchQuery) params.append('search', searchQuery);
       params.append('page', currentPage.toString());
       params.append('per_page', itemsPerPage.toString());
+
+      // If user is an agent, only show tickets assigned to them
+      if (isAgent && user?.id) {
+        params.append('assigned_agent_id', user.id);
+      }
 
       const response = await api.tickets.list(Object.fromEntries(params));
       // The API returns { success: true, data: ticketsArray, meta: pagination }
@@ -116,19 +120,21 @@ export default function TicketsPage() {
 
   const getStatusBadge = (status: string) => {
     const config = statusConfig[status as keyof typeof statusConfig];
+    const colors = getStatusColor(status);
     return (
-      <Badge variant="outline" className="gap-1">
-        <span className={cn('h-2 w-2 rounded-full', config.color)} />
-        {config.label}
+      <Badge variant={`status-${status.toLowerCase()}` as any} className="gap-1.5">
+        <span className={cn('h-2 w-2 rounded-full', colors.dot)} />
+        {config?.label || getStatusLabel(status)}
       </Badge>
     );
   };
 
   const getPriorityBadge = (priority: string) => {
-    const config = priorityConfig[priority as keyof typeof priorityConfig];
+    const colors = getPriorityColor(priority);
     return (
-      <Badge variant={config.color as any}>
-        {config.label}
+      <Badge variant={`priority-${priority.toLowerCase()}` as any} className="gap-1.5">
+        <span className={cn('h-2 w-2 rounded-full', colors.dot)} />
+        {getPriorityLabel(priority)}
       </Badge>
     );
   };

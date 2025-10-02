@@ -34,7 +34,11 @@ import { useNotificationCounts } from '@/hooks/use-notifications';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 
 const getNavigation = (notificationCounts: any, userRole?: string) => [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  {
+    name: userRole === 'agent' ? 'My Queue' : 'Dashboard',
+    href: userRole === 'agent' ? '/dashboard/agent' : '/dashboard',
+    icon: LayoutDashboard
+  },
   {
     name: 'Tickets',
     href: '/tickets',
@@ -90,7 +94,7 @@ export function Sidebar() {
               <Menu className="h-5 w-5" />
             </Button>
 
-            <Link href="/dashboard" className="flex items-center space-x-2">
+            <Link href={user?.role === 'agent' ? '/dashboard/agent' : '/dashboard'} className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <span className="text-primary-foreground font-bold text-lg">A</span>
               </div>

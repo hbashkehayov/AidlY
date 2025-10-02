@@ -18,6 +18,34 @@ class ClientController extends Controller
     {
         $query = Client::active();
 
+        // Filter by agent_id - only show clients who have tickets assigned to this agent
+        if ($request->has('agent_id')) {
+            $agentId = $request->get('agent_id');
+            $clientIdsForAgent = $this->getClientIdsForAgent($agentId);
+
+            if (empty($clientIdsForAgent)) {
+                // If agent has no tickets, return empty result
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'meta' => [
+                        'current_page' => 1,
+                        'per_page' => $request->get('limit', 20),
+                        'total' => 0,
+                        'last_page' => 1,
+                        'from' => null,
+                        'to' => null,
+                        'total_tickets_overall' => 0,
+                        'blocked_count' => 0,
+                        'active_support_count' => 0,
+                        'new_this_month' => 0,
+                    ]
+                ]);
+            }
+
+            $query->whereIn('id', $clientIdsForAgent);
+        }
+
         // Apply filters
         if ($request->has('search')) {
             $query->search($request->get('search'));
@@ -63,11 +91,23 @@ class ClientController extends Controller
         $perPage = min($request->get('limit', 20), 100);
         $clients = $query->paginate($perPage);
 
-        // Add ticket counts for each client
-        $clientsWithTickets = $this->enrichClientsWithTicketCounts($clients->items());
+        // Get agent ID for filtering
+        $agentId = $request->get('agent_id');
 
-        // Get total ticket count across ALL customers (not just current page)
-        $overallTicketCount = $this->getTotalTicketCount();
+        // Add ticket counts for each client (filtered by agent if applicable)
+        $clientsWithTickets = $this->enrichClientsWithTicketCounts($clients->items(), $agentId);
+
+        // Get agent-specific or overall statistics
+
+        if ($agentId) {
+            // Agent-specific statistics
+            $overallTicketCount = $this->getAgentTicketCount($agentId);
+            $overallStats = $this->getAgentCustomerStats($agentId);
+        } else {
+            // System-wide statistics
+            $overallTicketCount = $this->getTotalTicketCount();
+            $overallStats = $this->getOverallCustomerStats();
+        }
 
         return response()->json([
             'success' => true,
@@ -80,8 +120,181 @@ class ClientController extends Controller
                 'from' => $clients->firstItem(),
                 'to' => $clients->lastItem(),
                 'total_tickets_overall' => $overallTicketCount,
+                'blocked_count' => $overallStats['blocked_count'],
+                'active_support_count' => $overallStats['active_support_count'],
+                'new_this_month' => $overallStats['new_this_month'],
             ]
         ]);
+    }
+
+    /**
+     * Get client IDs for a specific agent
+     */
+    protected function getClientIdsForAgent(string $agentId): array
+    {
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch tickets assigned to this agent
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets", [
+                    'assigned_agent_id' => $agentId,
+                    'limit' => 10000  // High limit to get all tickets
+                ]);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data'])) {
+                    $tickets = $responseData['data'];
+
+                    // Get unique client IDs
+                    $clientIds = [];
+                    foreach ($tickets as $ticket) {
+                        if (isset($ticket['client_id']) && !in_array($ticket['client_id'], $clientIds)) {
+                            $clientIds[] = $ticket['client_id'];
+                        }
+                    }
+
+                    return $clientIds;
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch client IDs for agent', [
+                'agent_id' => $agentId,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return [];
+    }
+
+    /**
+     * Get ticket count for a specific agent
+     */
+    protected function getAgentTicketCount(string $agentId): int
+    {
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch tickets assigned to this agent
+            $response = \Illuminate\Support\Facades\Http::timeout(5)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets", [
+                    'assigned_agent_id' => $agentId,
+                    'limit' => 1
+                ]);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['meta'])) {
+                    return $responseData['meta']['total'] ?? 0;
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch agent ticket count', [
+                'agent_id' => $agentId,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Get customer statistics for a specific agent
+     */
+    protected function getAgentCustomerStats(string $agentId): array
+    {
+        try {
+            // Get client IDs for this agent
+            $clientIds = $this->getClientIdsForAgent($agentId);
+
+            if (empty($clientIds)) {
+                return [
+                    'blocked_count' => 0,
+                    'active_support_count' => 0,
+                    'new_this_month' => 0,
+                ];
+            }
+
+            // Count blocked customers among agent's clients
+            $blockedCount = Client::whereIn('id', $clientIds)
+                ->where('is_blocked', true)
+                ->where('is_deleted', false)
+                ->count();
+
+            // Get active support count (clients with open/pending tickets)
+            $activeSupportCount = $this->getAgentActiveSupportCount($agentId);
+
+            // Count new customers this month among agent's clients
+            $currentDate = \Carbon\Carbon::now();
+            $newThisMonth = Client::whereIn('id', $clientIds)
+                ->where('is_deleted', false)
+                ->whereYear('created_at', $currentDate->year)
+                ->whereMonth('created_at', $currentDate->month)
+                ->count();
+
+            return [
+                'blocked_count' => $blockedCount,
+                'active_support_count' => $activeSupportCount,
+                'new_this_month' => $newThisMonth,
+            ];
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to get agent customer stats', [
+                'agent_id' => $agentId,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'blocked_count' => 0,
+                'active_support_count' => 0,
+                'new_this_month' => 0,
+            ];
+        }
+    }
+
+    /**
+     * Get count of agent's customers with pending tickets
+     */
+    protected function getAgentActiveSupportCount(string $agentId): int
+    {
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch tickets assigned to agent with pending status
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets", [
+                    'assigned_agent_id' => $agentId,
+                    'status' => 'pending',
+                    'limit' => 10000
+                ]);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data'])) {
+                    $tickets = $responseData['data'];
+
+                    // Get unique client IDs
+                    $uniqueClientIds = [];
+                    foreach ($tickets as $ticket) {
+                        if (isset($ticket['client_id']) && !in_array($ticket['client_id'], $uniqueClientIds)) {
+                            $uniqueClientIds[] = $ticket['client_id'];
+                        }
+                    }
+
+                    return count($uniqueClientIds);
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch agent pending support count', [
+                'agent_id' => $agentId,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return 0;
     }
 
     /**
@@ -113,9 +326,90 @@ class ClientController extends Controller
     }
 
     /**
-     * Enrich clients with ticket counts from ticket service
+     * Get overall customer statistics (blocked count, active support, new this month)
      */
-    protected function enrichClientsWithTicketCounts(array $clients): array
+    protected function getOverallCustomerStats(): array
+    {
+        try {
+            // Count blocked customers (across all, not just current page)
+            $blockedCount = Client::where('is_blocked', true)
+                ->where('is_deleted', false)
+                ->count();
+
+            // Count customers with active tickets (requires ticket service)
+            $activeSupportCount = $this->getActiveSupportCount();
+
+            // Count new customers this month
+            $currentDate = \Carbon\Carbon::now();
+            $newThisMonth = Client::where('is_deleted', false)
+                ->whereYear('created_at', $currentDate->year)
+                ->whereMonth('created_at', $currentDate->month)
+                ->count();
+
+            return [
+                'blocked_count' => $blockedCount,
+                'active_support_count' => $activeSupportCount,
+                'new_this_month' => $newThisMonth,
+            ];
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to get overall customer stats', [
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'blocked_count' => 0,
+                'active_support_count' => 0,
+                'new_this_month' => 0,
+            ];
+        }
+    }
+
+    /**
+     * Get count of customers with pending tickets
+     */
+    protected function getActiveSupportCount(): int
+    {
+        try {
+            // Get ticket service URL from env
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
+
+            // Fetch all tickets with 'pending' status
+            $response = \Illuminate\Support\Facades\Http::timeout(10)
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets", [
+                    'status' => 'pending',
+                    'limit' => 10000  // High limit to get all pending tickets
+                ]);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                if (isset($responseData['success']) && $responseData['success'] && isset($responseData['data'])) {
+                    $tickets = $responseData['data'];
+
+                    // Get unique client IDs
+                    $uniqueClientIds = [];
+                    foreach ($tickets as $ticket) {
+                        if (isset($ticket['client_id']) && !in_array($ticket['client_id'], $uniqueClientIds)) {
+                            $uniqueClientIds[] = $ticket['client_id'];
+                        }
+                    }
+
+                    return count($uniqueClientIds);
+                }
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to fetch pending support count', [
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Enrich clients with ticket counts from ticket service
+     * If agent_id is provided, only count tickets assigned to that agent
+     */
+    protected function enrichClientsWithTicketCounts(array $clients, ?string $agentId = null): array
     {
         if (empty($clients)) {
             return $clients;
@@ -128,15 +422,22 @@ class ClientController extends Controller
             // Fetch ticket counts for all clients
             $clientIds = array_column($clients, 'id');
 
+            $params = [
+                'client_ids' => implode(',', $clientIds)
+            ];
+
+            // If agent_id provided, filter by agent's tickets
+            if ($agentId) {
+                $params['agent_id'] = $agentId;
+            }
+
             \Illuminate\Support\Facades\Log::info('Fetching ticket stats', [
                 'url' => "{$ticketServiceUrl}/api/v1/public/tickets/stats/by-clients",
-                'client_ids' => $clientIds
+                'params' => $params
             ]);
 
             $response = \Illuminate\Support\Facades\Http::timeout(5)
-                ->get("{$ticketServiceUrl}/api/v1/public/tickets/stats/by-clients", [
-                    'client_ids' => implode(',', $clientIds)
-                ]);
+                ->get("{$ticketServiceUrl}/api/v1/public/tickets/stats/by-clients", $params);
 
             \Illuminate\Support\Facades\Log::info('Ticket stats response', [
                 'status' => $response->status(),

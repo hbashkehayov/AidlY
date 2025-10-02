@@ -41,6 +41,14 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         $router->get('/activity', 'DashboardController@activityFeed');
         $router->get('/sla-compliance', 'DashboardController@slaCompliance');
         $router->get('/agent-performance', 'DashboardController@agentPerformance');
+        $router->get('/agent/{agentId}/metrics', 'DashboardController@agentDetailedMetrics');
+
+        // Agent-specific dashboard endpoints
+        $router->get('/agent-queue', 'DashboardController@agentQueue');
+        $router->get('/agent-stats', 'DashboardController@agentStats');
+        $router->get('/agent-activity', 'DashboardController@agentActivity');
+        $router->get('/agent-productivity', 'DashboardController@agentProductivity');
+        $router->get('/agent-replies', 'DashboardController@agentReplies');
     });
 
     // Reports

@@ -43,19 +43,20 @@ $router->group(['prefix' => 'api/v1/auth'], function () use ($router) {
     $router->group(['middleware' => 'jwt'], function () use ($router) {
         $router->post('logout', 'AuthController@logout');
         $router->get('me', 'AuthController@me');
+        $router->put('update-profile', 'AuthController@updateProfile');
         $router->post('change-password', 'AuthController@changePassword');
     });
 });
 
-// User listing for assignment (all authenticated users)
+// User listing for all authenticated users (read-only for agents)
 $router->group(['prefix' => 'api/v1/users', 'middleware' => 'jwt'], function () use ($router) {
     $router->get('/assignable', 'UserController@listAssignable');
+    $router->get('/', 'UserController@index');           // Allow all authenticated users to view user list
+    $router->get('/{id}', 'UserController@show');         // Allow all authenticated users to view user details
 });
 
-// User management routes (admin only)
+// User management routes (admin/supervisor only - write operations)
 $router->group(['prefix' => 'api/v1/users', 'middleware' => ['jwt', 'role:admin,supervisor']], function () use ($router) {
-    $router->get('/', 'UserController@index');
-    $router->get('/{id}', 'UserController@show');
     $router->post('/', 'UserController@create');
     $router->put('/{id}', 'UserController@update');
     $router->delete('/{id}', 'UserController@delete');

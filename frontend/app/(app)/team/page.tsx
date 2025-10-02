@@ -50,7 +50,6 @@ import { cn } from '@/lib/utils';
 
 const roleConfig = {
   admin: { label: 'Administrator', color: 'destructive', icon: Shield },
-  supervisor: { label: 'Supervisor', color: 'warning', icon: Shield },
   agent: { label: 'Agent', color: 'default', icon: UserIcon },
 };
 
@@ -76,20 +75,21 @@ export default function TeamPage() {
     },
   });
 
-  // Fetch tickets to calculate stats for each user
+  // Fetch tickets to calculate stats for each user (only for admins)
   const { data: ticketsData } = useQuery({
     queryKey: ['all-tickets-for-stats'],
     queryFn: async () => {
       const response = await api.tickets.list({ limit: 1000 });
       return response.data?.data || response.data || [];
     },
+    enabled: isAdmin, // Only fetch ticket data for admins
   });
 
   const getRoleBadge = (role: string) => {
     const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.agent;
     const Icon = config.icon;
     return (
-      <Badge variant={config.color as any} className="gap-1">
+      <Badge variant={`role-${role}` as any} className="gap-1">
         <Icon className="h-3 w-3" />
         {config.label}
       </Badge>
@@ -136,7 +136,9 @@ export default function TeamPage() {
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Team</h2>
           <p className="text-muted-foreground">
-            View and manage your support team members
+            {isAdmin
+              ? 'View and manage your support team members'
+              : 'View your support team members'}
           </p>
         </div>
         {isAdmin && (
@@ -208,7 +210,6 @@ export default function TeamPage() {
               <SelectContent>
                 <SelectItem value="all">All Roles</SelectItem>
                 <SelectItem value="admin">Administrators</SelectItem>
-                <SelectItem value="supervisor">Supervisors</SelectItem>
                 <SelectItem value="agent">Agents</SelectItem>
               </SelectContent>
             </Select>
@@ -225,17 +226,21 @@ export default function TeamPage() {
                 <TableHead>Team Member</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-center">Total Tickets</TableHead>
-                <TableHead className="text-center">Open</TableHead>
-                <TableHead className="text-center">Resolved</TableHead>
+                {isAdmin && (
+                  <>
+                    <TableHead className="text-center">Total Tickets</TableHead>
+                    <TableHead className="text-center">Open</TableHead>
+                    <TableHead className="text-center">Resolved</TableHead>
+                  </>
+                )}
                 <TableHead>Joined</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                {isAdmin && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 4} className="text-center py-8">
                     <div className="flex justify-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     </div>
@@ -243,7 +248,7 @@ export default function TeamPage() {
                 </TableRow>
               ) : filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 4} className="text-center py-8">
                     No team members found
                   </TableCell>
                 </TableRow>
@@ -255,8 +260,8 @@ export default function TeamPage() {
                   return (
                     <TableRow
                       key={user.id}
-                      className="cursor-pointer hover:bg-accent/50"
-                      onClick={() => router.push(`/team/${user.id}`)}
+                      className={isAdmin ? "cursor-pointer hover:bg-accent/50" : ""}
+                      onClick={isAdmin ? () => router.push(`/team/${user.id}`) : undefined}
                     >
                       <TableCell>
                         <div className="flex items-center gap-3">
@@ -288,63 +293,69 @@ export default function TeamPage() {
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Ticket className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{stats.total}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Clock className="h-4 w-4 text-yellow-500" />
-                          <span className="font-medium">{stats.open}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <CheckCircle className="h-4 w-4 text-green-500" />
-                          <span className="font-medium">{stats.closed}</span>
-                        </div>
-                      </TableCell>
+                      {isAdmin && (
+                        <>
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Ticket className="h-4 w-4 text-muted-foreground" />
+                              <span className="font-medium">{stats.total}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Clock className="h-4 w-4 text-yellow-500" />
+                              <span className="font-medium">{stats.open}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                              <span className="font-medium">{stats.closed}</span>
+                            </div>
+                          </TableCell>
+                        </>
+                      )}
                       <TableCell>
                         <div className="flex items-center gap-1 text-sm text-muted-foreground">
                           <Calendar className="h-3 w-3" />
                           {user.created_at ? format(new Date(user.created_at), 'MMM yyyy') : '-'}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => router.push(`/team/${user.id}`)}>
-                              <UserIcon className="mr-2 h-4 w-4" />
-                              View Profile
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <Mail className="mr-2 h-4 w-4" />
-                              Send Email
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem>
-                              Edit Member
-                            </DropdownMenuItem>
-                            {user.is_active ? (
-                              <DropdownMenuItem className="text-red-600">
-                                Deactivate
+                      {isAdmin && (
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="sm">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuItem onClick={() => router.push(`/team/${user.id}`)}>
+                                <UserIcon className="mr-2 h-4 w-4" />
+                                View Profile
                               </DropdownMenuItem>
-                            ) : (
                               <DropdownMenuItem>
-                                Activate
+                                <Mail className="mr-2 h-4 w-4" />
+                                Send Email
                               </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem>
+                                Edit Member
+                              </DropdownMenuItem>
+                              {user.is_active ? (
+                                <DropdownMenuItem className="text-red-600">
+                                  Deactivate
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem>
+                                  Activate
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      )}
                     </TableRow>
                   );
                 })

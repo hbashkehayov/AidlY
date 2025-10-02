@@ -67,7 +67,8 @@ class TicketComment extends Model
 
         static::created(function ($comment) {
             // Update ticket's first response time if this is the first agent response
-            if ($comment->user_id && !$comment->is_internal_note) {
+            // INCLUDES internal notes - agents working on tickets should count as response
+            if ($comment->user_id) {
                 $ticket = $comment->ticket;
                 if (!$ticket->first_response_at) {
                     $ticket->first_response_at = $comment->created_at;

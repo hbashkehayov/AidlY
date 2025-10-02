@@ -56,7 +56,6 @@ const priorityConfig = {
 
 const roleConfig = {
   admin: { label: 'Administrator', color: 'destructive', icon: Shield },
-  supervisor: { label: 'Supervisor', color: 'warning', icon: Shield },
   agent: { label: 'Agent', color: 'default', icon: UserIcon },
 };
 
@@ -97,7 +96,7 @@ export default function ProfilePage() {
     const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.agent;
     const Icon = config.icon;
     return (
-      <Badge variant={config.color as any} className="gap-1">
+      <Badge variant={`role-${role}` as any} className="gap-1">
         <Icon className="h-3 w-3" />
         {config.label}
       </Badge>
