@@ -11,6 +11,8 @@ use Webklex\PHPIMAP\IMAP;
 use Webklex\PHPIMAP\Exceptions\ConnectionFailedException;
 use Webklex\PHPIMAP\Exceptions\AuthFailedException;
 use Illuminate\Support\Facades\Log;
+use ZBateson\MailMimeParser\MailMimeParser;
+use ZBateson\MailMimeParser\Message as MimeMessage;
 
 class ImapService
 {
@@ -80,7 +82,11 @@ class ImapService
             $client->connect();
 
             $folder = $client->getFolder('INBOX');
-            $messages = $folder->messages()->unseen()->get();
+            // Ensure body fetching is enabled in the query
+            $messages = $folder->query()
+                ->unseen()
+                ->setFetchBody(true)
+                ->get();
 
             $fetchedCount = 0;
             $errors = [];
@@ -165,10 +171,14 @@ class ImapService
     {
         $messageId = $message->getMessageId();
 
-        // Check for duplicates
-        if (EmailQueue::isDuplicate($messageId, $account->id)) {
+        // Normalize message ID by removing angle brackets for consistent duplicate detection
+        $normalizedMessageId = trim($messageId, '<>');
+
+        // Check for duplicates using normalized message ID
+        if (EmailQueue::isDuplicate($normalizedMessageId, $account->id)) {
             Log::debug("Skipping duplicate email", [
                 'message_id' => $messageId,
+                'normalized_message_id' => $normalizedMessageId,
                 'account_id' => $account->id,
             ]);
             return;
@@ -176,6 +186,9 @@ class ImapService
 
         // Extract email data
         $emailData = $this->extractEmailData($message, $account);
+
+        // Ensure message_id is normalized (without angle brackets)
+        $emailData['message_id'] = $normalizedMessageId;
 
         // Save to email queue
         $emailQueue = new EmailQueue($emailData);
@@ -186,7 +199,7 @@ class ImapService
 
         Log::debug("Email added to queue", [
             'queue_id' => $emailQueue->id,
-            'message_id' => $messageId,
+            'message_id' => $normalizedMessageId,
             'subject' => $message->getSubject(),
             'from' => $message->getFrom()[0]->mail ?? 'unknown',
         ]);
@@ -215,12 +228,37 @@ class ImapService
             $ccArray[] = $cc->mail;
         }
 
-        // Extract body content
-        $bodyHtml = $message->getHTMLBody();
-        $bodyPlain = $message->getTextBody();
+        // Extract body content using zbateson/mail-mime-parser (handles attachments properly)
+        $bodyHtml = null;
+        $bodyPlain = null;
 
-        // Process attachments
-        $attachments = $this->processAttachments($message);
+        try {
+            $result = $this->extractBodiesWithZbateson($message);
+
+            if ($result) {
+                $bodyHtml = $result['html'];
+                $bodyPlain = $result['plain'];
+
+                \Log::info('Email body extracted successfully', [
+                    'message_id' => $message->getMessageId(),
+                    'html_length' => strlen($bodyHtml ?? ''),
+                    'plain_length' => strlen($bodyPlain ?? ''),
+                ]);
+            } else {
+                \Log::warning('No body content extracted from email', [
+                    'message_id' => $message->getMessageId(),
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Failed to extract email body', [
+                'message_id' => $message->getMessageId(),
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Process attachments (also extract from the same parsed message if available)
+        $attachments = $this->processAttachments($message, $result);
 
         // Convert inline images (CID references) to base64 data URIs
         if ($bodyHtml && !empty($attachments)) {
@@ -243,10 +281,15 @@ class ImapService
             }
         }
 
+        // Normalize message IDs (remove angle brackets)
+        $normalizedMessageId = trim($message->getMessageId(), '<>');
+        $normalizedInReplyTo = $message->getInReplyTo() ? trim($message->getInReplyTo(), '<>') : null;
+        $normalizedReferences = $message->getReferences() ? trim($message->getReferences(), '<>') : null;
+
         $headers = [
-            'message-id' => $message->getMessageId(),
-            'in-reply-to' => $message->getInReplyTo(),
-            'references' => $message->getReferences(),
+            'message-id' => $normalizedMessageId,
+            'in-reply-to' => $normalizedInReplyTo,
+            'references' => $normalizedReferences,
             'date' => $dateString,
             'priority' => $message->getPriority(),
             'thread-topic' => $message->getHeader('thread-topic'),
@@ -254,7 +297,7 @@ class ImapService
 
         return [
             'email_account_id' => $account->id,
-            'message_id' => $message->getMessageId(),
+            'message_id' => $normalizedMessageId,
             'from_address' => $fromAddress,
             'to_addresses' => !empty($toArray) ? $toArray : null,
             'cc_addresses' => !empty($ccArray) ? $ccArray : null,
@@ -274,24 +317,14 @@ class ImapService
      */
     protected function embedInlineImages(string $html, array $attachments, Message $message): string
     {
-        // Get all attachments with content IDs (inline images)
-        $attachmentCollection = $message->getAttachments();
-
-        foreach ($attachmentCollection as $attachment) {
+        // Use the attachments array we already extracted
+        foreach ($attachments as $attachment) {
             try {
-                $contentId = $attachment->getContentId();
+                $contentId = $attachment['content_id'] ?? null;
 
-                if ($contentId) {
-                    // Remove angle brackets if present
-                    $contentId = trim($contentId, '<>');
-
-                    // Get attachment content and convert to base64
-                    $content = $attachment->getContent();
-                    $base64Content = base64_encode($content);
-                    $mimeType = $attachment->getMimeType();
-
-                    // Create data URI
-                    $dataUri = "data:{$mimeType};base64,{$base64Content}";
+                if ($contentId && $attachment['is_inline']) {
+                    // Create data URI from the base64 content we already have
+                    $dataUri = "data:{$attachment['mime_type']};base64,{$attachment['content_base64']}";
 
                     // Replace CID references with data URI
                     // Handle various CID formats: cid:xxx, cid:xxx@domain, etc.
@@ -306,8 +339,8 @@ class ImapService
 
                     Log::debug("Embedded inline image", [
                         'content_id' => $contentId,
-                        'mime_type' => $mimeType,
-                        'size' => strlen($content),
+                        'mime_type' => $attachment['mime_type'],
+                        'size' => $attachment['size'],
                     ]);
                 }
             } catch (\Exception $e) {
@@ -322,75 +355,157 @@ class ImapService
     }
 
     /**
-     * Process email attachments
+     * Process email attachments using zbateson parser
      */
-    protected function processAttachments(Message $message): array
+    protected function processAttachments(Message $message, ?array $bodyResult = null): array
     {
         $attachments = [];
-        $attachmentCollection = $message->getAttachments();
 
-        if ($attachmentCollection->count() > $this->maxAttachments) {
-            Log::warning("Email has too many attachments", [
-                'message_id' => $message->getMessageId(),
-                'attachment_count' => $attachmentCollection->count(),
-                'max_allowed' => $this->maxAttachments,
+        try {
+            // Parse email with zbateson - try to get the complete raw message including headers
+            $rawEmail = $message->getRawBody();
+
+            // Alternative: Try getting the full message with headers
+            if (method_exists($message, 'getHeader')) {
+                try {
+                    $fullRaw = $message->getHeader()->raw . "\r\n\r\n" . $rawEmail;
+                    \Log::debug('Using full raw email with headers', [
+                        'raw_body_length' => strlen($rawEmail),
+                        'full_raw_length' => strlen($fullRaw),
+                    ]);
+                    $rawEmail = $fullRaw;
+                } catch (\Exception $e) {
+                    \Log::debug('Could not prepend headers, using raw body only', ['error' => $e->getMessage()]);
+                }
+            }
+
+            if (empty($rawEmail)) {
+                return [];
+            }
+
+            // Check first 500 chars of raw email to see structure
+            \Log::debug('Raw email preview', [
+                'preview' => substr($rawEmail, 0, 500),
+                'total_length' => strlen($rawEmail),
             ]);
-            return [];
-        }
 
-        foreach ($attachmentCollection as $attachment) {
-            try {
-                $fileName = $attachment->getName();
-                $fileSize = $attachment->getSize();
-                $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            $parser = new MailMimeParser();
+            $parsedMessage = $parser->parse($rawEmail, true);
 
-                // Check file size
-                if ($fileSize > $this->maxAttachmentSize) {
-                    Log::warning("Attachment too large, skipping", [
-                        'filename' => $fileName,
-                        'size' => $fileSize,
-                        'max_size' => $this->maxAttachmentSize,
-                    ]);
-                    continue;
-                }
+            // Get all attachment parts
+            $attachmentParts = $parsedMessage->getAllAttachmentParts();
+            $allParts = $parsedMessage->getAllParts();
 
-                // Check file type
-                if (!in_array($extension, $this->allowedAttachmentTypes)) {
-                    Log::warning("Attachment type not allowed, skipping", [
-                        'filename' => $fileName,
-                        'extension' => $extension,
-                        'allowed_types' => $this->allowedAttachmentTypes,
-                    ]);
-                    continue;
-                }
+            \Log::info('Attachment extraction attempt', [
+                'message_id' => $message->getMessageId(),
+                'attachment_count' => count($attachmentParts),
+                'all_parts_count' => count($allParts),
+                'raw_email_length' => strlen($rawEmail),
+            ]);
 
-                // Get attachment content
-                $content = $attachment->getContent();
-                $base64Content = base64_encode($content);
+            // Debug: Check message structure
+            \Log::debug('Message structure', [
+                'is_multipart' => $parsedMessage->isMultiPart(),
+                'is_mime' => $parsedMessage->isMime(),
+                'content_type' => $parsedMessage->getContentType(),
+                'part_count' => $parsedMessage->getPartCount(),
+            ]);
 
-                // Get content ID for inline images
-                $contentId = $attachment->getContentId();
-                if ($contentId) {
-                    $contentId = trim($contentId, '<>');
-                }
-
-                $attachments[] = [
-                    'filename' => $fileName,
-                    'size' => $fileSize,
-                    'mime_type' => $attachment->getMimeType(),
-                    'extension' => $extension,
-                    'content_base64' => $base64Content,
-                    'is_inline' => $contentId ? true : false,
-                    'content_id' => $contentId,
-                ];
-
-            } catch (\Exception $e) {
-                Log::error("Failed to process attachment", [
-                    'message_id' => $message->getMessageId(),
-                    'filename' => $attachment->getName(),
-                    'error' => $e->getMessage(),
+            // Debug: Log all parts to see what we have
+            foreach ($allParts as $index => $part) {
+                \Log::debug('MIME part detected', [
+                    'index' => $index,
+                    'content_type' => $part->getContentType(),
+                    'disposition' => $part->getContentDisposition(),
+                    'filename' => $part->getFilename(),
+                    'size' => strlen($part->getContent() ?? ''),
+                    'is_attachment' => ($part->getContentDisposition() === 'attachment'),
                 ]);
             }
+
+            // Try alternative: Look for parts with filenames regardless of disposition
+            \Log::info('Checking for parts with filenames...');
+            foreach ($allParts as $part) {
+                $filename = $part->getFilename();
+                if (!empty($filename)) {
+                    \Log::info('Found part with filename!', [
+                        'filename' => $filename,
+                        'content_type' => $part->getContentType(),
+                        'disposition' => $part->getContentDisposition(),
+                        'size' => strlen($part->getContent() ?? ''),
+                    ]);
+                }
+            }
+
+            if (count($attachmentParts) > $this->maxAttachments) {
+                Log::warning("Email has too many attachments", [
+                    'message_id' => $message->getMessageId(),
+                    'attachment_count' => count($attachmentParts),
+                    'max_allowed' => $this->maxAttachments,
+                ]);
+                return [];
+            }
+
+            foreach ($attachmentParts as $attachment) {
+                try {
+                    $fileName = $attachment->getFilename();
+                    $content = $attachment->getContent();
+                    $fileSize = strlen($content);
+                    $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+                    // Check file size
+                    if ($fileSize > $this->maxAttachmentSize) {
+                        Log::warning("Attachment too large, skipping", [
+                            'filename' => $fileName,
+                            'size' => $fileSize,
+                            'max_size' => $this->maxAttachmentSize,
+                        ]);
+                        continue;
+                    }
+
+                    // Check file type
+                    if (!in_array($extension, $this->allowedAttachmentTypes)) {
+                        Log::warning("Attachment type not allowed, skipping", [
+                            'filename' => $fileName,
+                            'extension' => $extension,
+                            'allowed_types' => $this->allowedAttachmentTypes,
+                        ]);
+                        continue;
+                    }
+
+                    // Get content ID for inline images
+                    $contentId = $attachment->getContentId();
+                    if ($contentId) {
+                        $contentId = trim($contentId, '<>');
+                    }
+
+                    // Check disposition to determine if inline
+                    $disposition = strtolower($attachment->getContentDisposition() ?? '');
+                    $isInline = ($disposition === 'inline') || !empty($contentId);
+
+                    $attachments[] = [
+                        'filename' => $fileName ?: 'attachment_' . count($attachments),
+                        'size' => $fileSize,
+                        'mime_type' => $attachment->getContentType(),
+                        'extension' => $extension,
+                        'content_base64' => base64_encode($content),
+                        'is_inline' => $isInline,
+                        'content_id' => $contentId,
+                    ];
+
+                } catch (\Exception $e) {
+                    Log::error("Failed to process attachment", [
+                        'message_id' => $message->getMessageId(),
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error("Failed to extract attachments", [
+                'message_id' => $message->getMessageId(),
+                'error' => $e->getMessage(),
+            ]);
         }
 
         return $attachments;
@@ -460,6 +575,88 @@ class ImapService
             return [
                 'error' => $e->getMessage(),
             ];
+        }
+    }
+
+    /**
+     * Extract email bodies using zbateson/mail-mime-parser
+     * This library properly handles multipart MIME messages with attachments
+     *
+     * @param Message $message Webklex IMAP message object
+     * @return array|null Array with 'html' and 'plain' keys, or null on failure
+     */
+    protected function extractBodiesWithZbateson(Message $message): ?array
+    {
+        try {
+            // Get the raw email content
+            $rawEmail = $message->getRawBody();
+
+            if (empty($rawEmail)) {
+                \Log::warning('Raw email body is empty');
+                return null;
+            }
+
+            // Parse with zbateson (second param: true = attached content stream)
+            $parser = new MailMimeParser();
+            $parsedMessage = $parser->parse($rawEmail, true);
+
+            // Extract text bodies (zbateson handles multipart properly)
+            $textPlain = null;
+            $textHtml = null;
+
+            // Get text content
+            $textPart = $parsedMessage->getTextPart();
+            if ($textPart) {
+                $textPlain = $textPart->getContent();
+            }
+
+            // Get HTML content
+            $htmlPart = $parsedMessage->getHtmlPart();
+            if ($htmlPart) {
+                $textHtml = $htmlPart->getContent();
+            }
+
+            // If neither found, try to get any text content from parts
+            if (empty($textPlain) && empty($textHtml)) {
+                $allParts = $parsedMessage->getAllParts();
+                foreach ($allParts as $part) {
+                    $contentType = strtolower($part->getContentType() ?? '');
+
+                    // Skip attachments
+                    $disposition = strtolower($part->getContentDisposition() ?? '');
+                    if ($disposition === 'attachment') {
+                        continue;
+                    }
+
+                    if (strpos($contentType, 'text/plain') === 0 && empty($textPlain)) {
+                        $textPlain = $part->getContent();
+                    } elseif (strpos($contentType, 'text/html') === 0 && empty($textHtml)) {
+                        $textHtml = $part->getContent();
+                    }
+
+                    // Stop if we found both
+                    if (!empty($textPlain) && !empty($textHtml)) {
+                        break;
+                    }
+                }
+            }
+
+            // Return the results
+            if (!empty($textPlain) || !empty($textHtml)) {
+                return [
+                    'plain' => $textPlain,
+                    'html' => $textHtml,
+                ];
+            }
+
+            \Log::warning('Parsed message but found no text content');
+            return null;
+
+        } catch (\Exception $e) {
+            \Log::error('Email body extraction failed', [
+                'error' => $e->getMessage(),
+            ]);
+            return null;
         }
     }
 }

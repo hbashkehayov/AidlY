@@ -345,17 +345,44 @@ class EmailToTicketService
             throw new \Exception("Email sender is blocked: " . $email->from_address);
         }
 
-        // Prepare description - prefer HTML body over plain text, with fallback
-        $description = $email->body_html ?: $email->body_plain ?: $email->content;
+        // Enhanced description extraction with multiple fallbacks (same as comment logic)
+        \Log::info('Email body extraction for new ticket', [
+            'email_id' => $email->id,
+            'body_html_length' => strlen($email->body_html ?? ''),
+            'body_plain_length' => strlen($email->body_plain ?? ''),
+            'content_length' => strlen($email->content ?? ''),
+            'has_attachments' => $email->hasAttachments(),
+        ]);
 
-        // If description is empty, use subject as description (for system emails like mailer-daemon)
-        if (empty(trim($description))) {
-            $description = $email->subject;
-            Log::warning("Email has empty body, using subject as description", [
-                'email_id' => $email->id,
-                'from' => $email->from_address,
-                'subject' => $email->subject,
-            ]);
+        $description = null;
+
+        if (!empty($email->body_html)) {
+            $description = $this->cleanEmailContent($email->body_html, true);
+        } elseif (!empty($email->body_plain)) {
+            $description = $this->cleanEmailContent($email->body_plain, false);
+        } elseif (!empty($email->content)) {
+            $description = $this->cleanEmailContent($email->content, false);
+        }
+
+        // Final fallbacks if all sources are empty
+        if (empty($description)) {
+            if ($email->hasAttachments()) {
+                $attachmentCount = is_array($email->attachments) ? count($email->attachments) : 0;
+                $description = "[Email received with {$attachmentCount} attachment(s)]";
+                Log::warning("Email has no text content, only attachments - creating ticket anyway", [
+                    'email_id' => $email->id,
+                    'from' => $email->from_address,
+                    'attachment_count' => $attachmentCount,
+                ]);
+            } else {
+                // Last resort: use subject
+                $description = "[No readable content - possible email parsing error]";
+                Log::error("Email has no content and no attachments, using fallback", [
+                    'email_id' => $email->id,
+                    'from' => $email->from_address,
+                    'subject' => $email->subject,
+                ]);
+            }
         }
 
         // Prepare ticket data
@@ -481,9 +508,57 @@ class EmailToTicketService
             throw new \Exception("Email sender is blocked - Reply rejected: " . $email->from_address);
         }
 
-        // Prefer HTML body over plain text for comments as well
+        // Enhanced content extraction with multiple fallbacks
+        \Log::info('Email body extraction for ticket comment', [
+            'email_id' => $email->id,
+            'body_html_length' => strlen($email->body_html ?? ''),
+            'body_plain_length' => strlen($email->body_plain ?? ''),
+            'content_length' => strlen($email->content ?? ''),
+            'has_attachments' => $email->hasAttachments(),
+        ]);
+
+        // Try multiple sources in order of preference:
+        // 1. HTML body (best for formatting)
+        // 2. Plain text body
+        // 3. Processed content field
+        // 4. Fallback messages
+        $content = null;
+
+        if (!empty($email->body_html)) {
+            $content = $this->cleanEmailContent($email->body_html, true);
+        } elseif (!empty($email->body_plain)) {
+            $content = $this->cleanEmailContent($email->body_plain, false);
+        } elseif (!empty($email->content)) {
+            $content = $this->cleanEmailContent($email->content, false);
+        }
+
+        // Final fallbacks if all sources are empty
+        if (empty($content)) {
+            if ($email->hasAttachments()) {
+                $attachmentCount = is_array($email->attachments) ? count($email->attachments) : 0;
+                $content = "[Email received with {$attachmentCount} attachment(s)]";
+                \Log::warning('Email has no text content, only attachments', [
+                    'email_id' => $email->id,
+                    'attachment_count' => $attachmentCount,
+                ]);
+            } else {
+                $content = "[Email received with no readable content]";
+                \Log::error('Email has no content and no attachments', [
+                    'email_id' => $email->id,
+                    'from' => $email->from_address,
+                    'subject' => $email->subject,
+                ]);
+            }
+        }
+
+        \Log::info('Final comment content prepared', [
+            'email_id' => $email->id,
+            'content_length' => strlen($content),
+            'preview' => substr(strip_tags($content), 0, 100),
+        ]);
+
         $commentData = [
-            'content' => $email->body_html ?: $email->body_plain ?: $email->content,
+            'content' => $content,
             'is_internal_note' => false,
             // Email metadata for Gmail-style display
             'from_address' => $email->from_address,
@@ -500,6 +575,11 @@ class EmailToTicketService
                 'has_attachments' => $email->hasAttachments(),
             ],
         ];
+
+        // Include attachments if present
+        if ($email->hasAttachments()) {
+            $commentData['attachments'] = $email->attachments;
+        }
 
         $response = Http::post("{$this->ticketServiceUrl}/api/v1/public/tickets/{$ticketId}/comments", $commentData);
 
@@ -670,7 +750,7 @@ class EmailToTicketService
                     'content_base64' => $attachment['content_base64'],
                 ];
 
-                $response = Http::post("{$this->ticketServiceUrl}/api/v1/attachments", $attachmentData);
+                $response = Http::post("{$this->ticketServiceUrl}/api/v1/public/attachments", $attachmentData);
 
                 if (!$response->successful()) {
                     Log::error("Failed to upload attachment", [
@@ -953,5 +1033,97 @@ Please do not reply directly to this email.
 
 © {$companyName}. All rights reserved.
 TEXT;
+    }
+
+    /**
+     * Clean email content for customer support display
+     * Removes signatures, quoted replies, disclaimers, and email artifacts
+     *
+     * @param string $content The email content
+     * @param bool $isHtml Whether the content is HTML
+     * @return string Cleaned content
+     */
+    protected function cleanEmailContent(string $content, bool $isHtml = false): string
+    {
+        if (empty($content)) {
+            return '';
+        }
+
+        // If HTML, convert to plain text first
+        if ($isHtml) {
+            // Remove style and script tags with their content
+            $content = preg_replace('/<style\b[^>]*>.*?<\/style>/is', '', $content);
+            $content = preg_replace('/<script\b[^>]*>.*?<\/script>/is', '', $content);
+
+            // Convert <br> and <p> to newlines
+            $content = preg_replace('/<br\s*\/?>/', "\n", $content);
+            $content = preg_replace('/<\/p>/', "\n\n", $content);
+
+            // Strip all HTML tags
+            $content = strip_tags($content);
+
+            // Decode HTML entities
+            $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+
+        // Split into lines for processing
+        $lines = explode("\n", $content);
+        $cleanedLines = [];
+        $signatureFound = false;
+        $quotedReplyFound = false;
+
+        foreach ($lines as $line) {
+            $trimmedLine = trim($line);
+
+            // Stop at common email signatures
+            if (preg_match('/^(--|__)\s*$/', $trimmedLine) ||
+                preg_match('/^(Best regards|Kind regards|Thanks|Regards|Sincerely|Cheers|Best|BR|Thank you),?\s*$/i', $trimmedLine)) {
+                $signatureFound = true;
+                break;
+            }
+
+            // Stop at "On [date] [person] wrote:" patterns
+            if (preg_match('/^On .+ wrote:$/i', $trimmedLine) ||
+                preg_match('/^[0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4}.+wrote:$/i', $trimmedLine) ||
+                preg_match('/^\d{4}-\d{2}-\d{2}.+wrote:$/i', $trimmedLine)) {
+                $quotedReplyFound = true;
+                break;
+            }
+
+            // Skip lines starting with > (quoted text)
+            if (preg_match('/^>+/', $trimmedLine)) {
+                $quotedReplyFound = true;
+                continue;
+            }
+
+            // Skip common email disclaimers
+            if (preg_match('/^(CONFIDENTIAL|DISCLAIMER|This email|The information contained)/i', $trimmedLine)) {
+                break;
+            }
+
+            // Skip "Sent from my iPhone/Android" etc
+            if (preg_match('/^Sent from my (iPhone|iPad|Android|Samsung|Mobile)/i', $trimmedLine)) {
+                break;
+            }
+
+            // Skip empty lines if we haven't found content yet
+            if (empty($cleanedLines) && empty($trimmedLine)) {
+                continue;
+            }
+
+            $cleanedLines[] = $line;
+        }
+
+        // Join lines back together
+        $cleaned = implode("\n", $cleanedLines);
+
+        // Remove excessive whitespace
+        $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned);
+        $cleaned = preg_replace('/[ \t]{2,}/', ' ', $cleaned);
+
+        // Trim
+        $cleaned = trim($cleaned);
+
+        return $cleaned;
     }
 }

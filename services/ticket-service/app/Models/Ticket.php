@@ -204,6 +204,11 @@ class Ticket extends Model
         return $this->belongsTo(Category::class);
     }
 
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(Attachment::class)->orderBy('created_at', 'desc');
+    }
+
     /**
      * Get the assigned agent
      */

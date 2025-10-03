@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class TicketComment extends Model
@@ -96,6 +97,11 @@ class TicketComment extends Model
     public function ticket(): BelongsTo
     {
         return $this->belongsTo(Ticket::class);
+    }
+
+    public function commentAttachments(): HasMany
+    {
+        return $this->hasMany(Attachment::class, 'comment_id')->orderBy('created_at', 'desc');
     }
 
     /**

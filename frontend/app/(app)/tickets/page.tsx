@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -41,11 +42,21 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Search,
   Plus,
-  Filter,
   MoreHorizontal,
   Clock,
   User,
@@ -57,6 +68,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { format } from 'date-fns';
@@ -76,16 +88,25 @@ const statusConfig = {
 
 export default function TicketsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [selectedTickets, setSelectedTickets] = useState<string[]>([]);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [ticketToDelete, setTicketToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
 
   // Get current user to check role
   const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
   const isAgent = user?.role === 'agent';
+  const isAdmin = user?.role === 'admin';
+
+  const showBulkActions = selectedTickets.length > 0 || isExiting;
 
   const { data: tickets, isLoading } = useQuery({
     queryKey: ['tickets', selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage, isAgent ? user?.id : null],
@@ -137,6 +158,63 @@ export default function TicketsPage() {
         {getPriorityLabel(priority)}
       </Badge>
     );
+  };
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked && tickets?.data) {
+      setSelectedTickets(tickets.data.map((t: any) => t.id));
+    } else {
+      setSelectedTickets([]);
+    }
+  };
+
+  const handleSelectTicket = (ticketId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedTickets([...selectedTickets, ticketId]);
+    } else {
+      setSelectedTickets(selectedTickets.filter(id => id !== ticketId));
+    }
+  };
+
+  const handleClearSelection = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      setSelectedTickets([]);
+      setIsExiting(false);
+    }, 300);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedTickets.length === 0) return;
+
+    setIsDeleting(true);
+    try {
+      await Promise.all(selectedTickets.map(id => api.tickets.delete(id)));
+      handleClearSelection();
+      // Invalidate and refetch tickets without full page reload
+      await queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    } catch (error) {
+      console.error('Failed to delete tickets:', error);
+      alert('Failed to delete some tickets. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteTicket = async (ticketId: string) => {
+    setIsDeleting(true);
+    try {
+      await api.tickets.delete(ticketId);
+      setIsDeleteDialogOpen(false);
+      setTicketToDelete(null);
+      // Invalidate and refetch tickets without full page reload
+      await queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    } catch (error) {
+      console.error('Failed to delete ticket:', error);
+      alert('Failed to delete ticket. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -267,12 +345,77 @@ export default function TicketsPage() {
                 <SelectItem value="50">50</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon">
-              <Filter className="h-4 w-4" />
-            </Button>
           </div>
         </CardContent>
       </Card>
+
+      {/* Bulk Actions Bar - Admin Only */}
+      {isAdmin && showBulkActions && (
+        <Card className={cn(
+          "bg-accent/50 transition-all duration-300",
+          isExiting
+            ? "animate-out fade-out slide-out-to-top-2"
+            : "animate-in fade-in slide-in-from-top-2"
+        )}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <p className={cn(
+                "text-sm font-medium transition-all duration-500",
+                isExiting ? "animate-out fade-out" : "animate-in fade-in"
+              )}>
+                {selectedTickets.length} ticket{selectedTickets.length > 1 ? 's' : ''} selected
+              </p>
+              <div className={cn(
+                "flex gap-2 transition-all duration-500",
+                isExiting
+                  ? "animate-out fade-out slide-out-to-right-2"
+                  : "animate-in fade-in slide-in-from-right-2"
+              )}>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={isDeleting}
+                      className="bg-red-500/90 hover:bg-red-600 transition-all duration-200"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Selected
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Tickets?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Are you sure you want to delete {selectedTickets.length} ticket{selectedTickets.length > 1 ? 's' : ''}?
+                        This action cannot be undone and will permanently delete all ticket data.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleBulkDelete}
+                        className="bg-red-500 hover:bg-red-600"
+                      >
+                        {isDeleting ? 'Deleting...' : 'Delete Tickets'}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearSelection}
+                  className="transition-all duration-200"
+                >
+                  Clear Selection
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tickets Table */}
       <Card>
@@ -280,19 +423,27 @@ export default function TicketsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                {isAdmin && (
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={selectedTickets.length === tickets?.data?.length && tickets?.data?.length > 0}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Ticket</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Assigned To</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                {isAdmin && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 6} className="text-center py-8">
                     <div className="flex justify-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     </div>
@@ -300,7 +451,7 @@ export default function TicketsPage() {
                 </TableRow>
               ) : !tickets?.data || tickets.data.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8">
+                  <TableCell colSpan={isAdmin ? 8 : 6} className="text-center py-8">
                     No tickets found
                   </TableCell>
                 </TableRow>
@@ -309,8 +460,23 @@ export default function TicketsPage() {
                   <TableRow
                     key={ticket.id}
                     className="cursor-pointer hover:bg-accent/50"
-                    onClick={() => router.push(`/tickets/${ticket.id}`)}
+                    onClick={(e) => {
+                      // Don't navigate if clicking checkbox or actions
+                      if ((e.target as HTMLElement).closest('[data-no-navigate]')) {
+                        e.stopPropagation();
+                        return;
+                      }
+                      router.push(`/tickets/${ticket.id}`);
+                    }}
                   >
+                    {isAdmin && (
+                      <TableCell data-no-navigate onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedTickets.includes(ticket.id)}
+                          onCheckedChange={(checked) => handleSelectTicket(ticket.id, checked as boolean)}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
@@ -366,24 +532,22 @@ export default function TicketsPage() {
                         </p>
                       </div>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem>View Details</DropdownMenuItem>
-                          <DropdownMenuItem>Assign Agent</DropdownMenuItem>
-                          <DropdownMenuItem>Change Priority</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem>Mark as Resolved</DropdownMenuItem>
-                          <DropdownMenuItem className="text-red-600">Close Ticket</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+                    {isAdmin && (
+                      <TableCell className="text-right" data-no-navigate>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTicketToDelete(ticket.id);
+                            setIsDeleteDialogOpen(true);
+                          }}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )}
@@ -489,6 +653,36 @@ export default function TicketsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Ticket?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this ticket? This action cannot be undone and will permanently delete all ticket data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setTicketToDelete(null);
+              }}
+              disabled={isDeleting}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => ticketToDelete && handleDeleteTicket(ticketToDelete)}
+              disabled={isDeleting}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Ticket'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

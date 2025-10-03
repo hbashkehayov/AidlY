@@ -67,7 +67,7 @@ class TicketController extends Controller
             'direction' => 'string|in:asc,desc'
         ]);
 
-        $query = Ticket::active()->with(['category']);
+        $query = Ticket::active()->with(['category', 'attachments']);
 
         // Apply filters
         if ($request->has('status')) {
@@ -427,7 +427,7 @@ class TicketController extends Controller
     public function show(string $id): JsonResponse
     {
         $ticket = Ticket::active()
-            ->with(['category', 'comments', 'history'])
+            ->with(['category', 'comments', 'comments.commentAttachments', 'history', 'attachments'])
             ->find($id);
 
         if (!$ticket) {
@@ -601,11 +601,12 @@ class TicketController extends Controller
     }
 
     /**
-     * Delete (soft delete) a ticket
+     * Permanently delete a ticket from the database
      */
     public function destroy(string $id): JsonResponse
     {
-        $ticket = Ticket::active()->find($id);
+        // Find ticket without active scope to allow deleting any ticket
+        $ticket = Ticket::find($id);
 
         if (!$ticket) {
             return response()->json([
@@ -617,8 +618,9 @@ class TicketController extends Controller
         }
 
         try {
-            $ticket->update(['is_deleted' => true]);
+            DB::beginTransaction();
 
+            // Create history record before deleting
             TicketHistory::create([
                 'ticket_id' => $ticket->id,
                 'user_id' => $this->getUserId(),
@@ -626,7 +628,42 @@ class TicketController extends Controller
                 'metadata' => [
                     'user_agent' => request()->header('User-Agent'),
                     'ip_address' => request()->ip(),
+                    'ticket_number' => $ticket->ticket_number,
+                    'subject' => $ticket->subject,
                 ]
+            ]);
+
+            // Delete related records first to avoid foreign key constraints
+
+            // 1. Nullify email_queue references
+            DB::table('email_queue')
+                ->where('ticket_id', $ticket->id)
+                ->update(['ticket_id' => null]);
+
+            // 2. Delete ticket comments
+            DB::table('ticket_comments')
+                ->where('ticket_id', $ticket->id)
+                ->delete();
+
+            // 3. Delete ticket history
+            DB::table('ticket_history')
+                ->where('ticket_id', $ticket->id)
+                ->delete();
+
+            // 4. Delete attachments
+            DB::table('attachments')
+                ->where('ticket_id', $ticket->id)
+                ->delete();
+
+            // 5. Finally, delete the ticket
+            $ticket->delete();
+
+            DB::commit();
+
+            Log::info('Ticket permanently deleted', [
+                'ticket_id' => $id,
+                'ticket_number' => $ticket->ticket_number,
+                'deleted_by' => $this->getUserId()
             ]);
 
             return response()->json([
@@ -635,6 +672,13 @@ class TicketController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            DB::rollBack();
+
+            Log::error('Failed to delete ticket', [
+                'ticket_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'error' => [
@@ -725,11 +769,7 @@ class TicketController extends Controller
             'is_internal_note' => 'boolean',
             'client_id' => 'string|uuid',
             'client_email' => 'email',  // Allow client email for public comments
-            'attachments' => 'array',
-            'attachments.*.name' => 'string',
-            'attachments.*.url' => 'string|url',
-            'attachments.*.size' => 'integer',
-            'attachments.*.type' => 'string'
+            'attachments' => 'sometimes|array',  // Accept both file uploads and metadata
         ]);
 
         try {
@@ -783,13 +823,74 @@ class TicketController extends Controller
                 $metadata['client_email'] = $clientEmail;
             }
 
+            // Process file attachments if any
+            $attachmentData = [];
+
+            // Handle file uploads (from frontend)
+            if ($request->hasFile('attachments')) {
+                $files = $request->file('attachments');
+
+                // Ensure it's an array
+                if (!is_array($files)) {
+                    $files = [$files];
+                }
+
+                foreach ($files as $file) {
+                    if ($file && $file->isValid()) {
+                        // Generate unique filename
+                        $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
+                        $path = 'attachments/' . $ticket->id . '/' . $filename;
+
+                        // Store in public disk (or configure MinIO)
+                        $storedPath = $file->storeAs('attachments/' . $ticket->id, $filename, 'public');
+
+                        $attachmentData[] = [
+                            'id' => (string) \Illuminate\Support\Str::uuid(),
+                            'filename' => $file->getClientOriginalName(),
+                            'path' => $storedPath,
+                            'url' => '/storage/' . $storedPath,
+                            'mime_type' => $file->getMimeType(),
+                            'size' => $file->getSize(),
+                        ];
+                    }
+                }
+            }
+            // Handle attachment metadata (from email service with base64 content)
+            elseif ($request->has('attachments') && is_array($request->attachments)) {
+                foreach ($request->attachments as $attachment) {
+                    // Skip inline images (content_id present)
+                    if (isset($attachment['is_inline']) && $attachment['is_inline']) {
+                        continue;
+                    }
+
+                    if (isset($attachment['content_base64']) && isset($attachment['filename'])) {
+                        // Decode base64 content and save to disk
+                        $content = base64_decode($attachment['content_base64']);
+                        $filename = time() . '_' . uniqid() . '_' . $attachment['filename'];
+
+                        // Save file to storage
+                        $storedPath = 'attachments/' . $ticket->id . '/' . $filename;
+                        \Storage::disk('public')->put($storedPath, $content);
+
+                        $attachmentData[] = [
+                            'id' => (string) \Illuminate\Support\Str::uuid(),
+                            'filename' => $attachment['filename'],
+                            'path' => $storedPath,
+                            'url' => '/storage/' . $storedPath,
+                            'mime_type' => $attachment['mime_type'] ?? 'application/octet-stream',
+                            'size' => $attachment['size'] ?? strlen($content),
+                        ];
+                    }
+                }
+            }
+
             $comment = TicketComment::create([
                 'ticket_id' => $ticket->id,
                 'user_id' => $userId,
                 'client_id' => $clientId,
                 'content' => $request->content,
                 'is_internal_note' => $request->get('is_internal_note', false),
-                'attachments' => $request->get('attachments', []),
+                'attachments' => !empty($attachmentData) ? $attachmentData : null,
                 'metadata' => !empty($metadata) ? $metadata : null
             ]);
 
@@ -973,6 +1074,17 @@ class TicketController extends Controller
                     'message_id' => $messageId,  // Add Message-ID for threading
                     'in_reply_to' => $originalMessageId,  // Add In-Reply-To header
                 ];
+
+                // Add attachments if present
+                if (!empty($comment->attachments)) {
+                    $emailData['attachments'] = array_map(function($attachment) {
+                        return [
+                            'filename' => $attachment['filename'],
+                            'path' => storage_path('app/public/' . $attachment['path']),
+                            'mime_type' => $attachment['mime_type'] ?? 'application/octet-stream',
+                        ];
+                    }, $comment->attachments);
+                }
 
                 \Log::info('DEBUGGING: Sending email request', [
                     'url' => $emailServiceUrl . '/api/v1/emails/send',

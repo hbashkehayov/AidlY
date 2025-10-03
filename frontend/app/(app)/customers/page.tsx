@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/table';
 import {
   Search,
-  Filter,
   Ticket,
   Ban,
   Users,
@@ -597,9 +596,6 @@ export default function CustomersPage() {
                 className="pl-9"
               />
             </div>
-            <Button variant="outline" size="icon">
-              <Filter className="h-4 w-4" />
-            </Button>
           </div>
         </CardContent>
       </Card>

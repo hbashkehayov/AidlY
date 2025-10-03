@@ -40,6 +40,11 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
     // Public routes (no authentication required, but authentication is respected if provided)
     $router->group(['prefix' => 'public', 'middleware' => 'auth.optional'], function () use ($router) {
 
+        // Attachments (for email service and public access)
+        $router->post('attachments', 'AttachmentController@store');
+        $router->get('attachments/{id}/download', 'AttachmentController@download');
+        $router->get('tickets/{id}/attachments', 'AttachmentController@getTicketAttachments');
+
         // Categories (public read-only access)
         $router->get('categories', 'CategoryController@index');
         $router->get('categories/tree', 'CategoryController@tree');
@@ -142,6 +147,16 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         $router->get('categories', 'CategoryController@index');
         $router->get('categories/tree', 'CategoryController@tree');
         $router->get('categories/{id}', 'CategoryController@show');
+
+        // Attachment management routes
+        $router->group(['prefix' => 'attachments'], function () use ($router) {
+            $router->post('/', 'AttachmentController@store');
+            $router->get('{id}/download', 'AttachmentController@download');
+            $router->delete('{id}', 'AttachmentController@destroy');
+        });
+
+        // Get attachments for a ticket
+        $router->get('tickets/{id}/attachments', 'AttachmentController@getTicketAttachments');
 
     });
 

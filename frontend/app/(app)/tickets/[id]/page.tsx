@@ -130,6 +130,34 @@ const formatFileSize = (bytes: number): string => {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 };
 
+const handleDownloadAttachment = async (attachmentId: string, filename: string) => {
+  try {
+    const response = await api.attachments.download(attachmentId);
+
+    // Create a blob from the response data
+    const blob = new Blob([response.data]);
+
+    // Create a temporary URL for the blob
+    const url = window.URL.createObjectURL(blob);
+
+    // Create a temporary anchor element and trigger download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+
+    // Cleanup
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    toast.success('Download started');
+  } catch (error: any) {
+    console.error('Failed to download attachment:', error);
+    toast.error('Failed to download attachment');
+  }
+};
+
 const hasExternalImages = (html: string): boolean => {
   if (!html) return false;
   // Check for external images (http/https URLs, not data URIs)
@@ -202,6 +230,7 @@ export default function TicketPage() {
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [replyEmail, setReplyEmail] = useState('');
   const [replyName, setReplyName] = useState('');
+  const [replyAttachments, setReplyAttachments] = useState<File[]>([]);
   const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('');
   const [forwardMessage, setForwardMessage] = useState('');
@@ -294,14 +323,15 @@ export default function TicketPage() {
   });
 
   const replyMutation = useMutation({
-    mutationFn: (data: { content: string; isInternal: boolean; email?: string }) =>
-      api.tickets.addComment(ticketId as string, data.content, data.isInternal, data.email),
+    mutationFn: (data: { content: string; isInternal: boolean; email?: string; attachments?: File[] }) =>
+      api.tickets.addComment(ticketId as string, data.content, data.isInternal, data.email, data.attachments),
     onSuccess: () => {
       setReplyContent('');
       setShowComposeReply(false);
       setIsInternalNote(false);
       setReplyEmail('');
       setReplyName('');
+      setReplyAttachments([]);
       queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
       toast.success('Reply sent successfully');
     },
@@ -371,20 +401,23 @@ export default function TicketPage() {
         replyMutation.mutate({
           content: formattedContent,
           isInternal: false,
-          email: replyEmail
+          email: replyEmail,
+          attachments: replyAttachments
         });
       } else {
         // Allow reply without email too
         replyMutation.mutate({
           content: replyContent,
-          isInternal: false
+          isInternal: false,
+          attachments: replyAttachments
         });
       }
     } else {
       // For authenticated users
       replyMutation.mutate({
         content: replyContent,
-        isInternal: isInternalNote
+        isInternal: isInternalNote,
+        attachments: replyAttachments
       });
     }
   };
@@ -746,12 +779,6 @@ export default function TicketPage() {
                           <span className="text-xs text-gray-500">
                             {ticket.created_at ? format(new Date(ticket.created_at), 'h:mm a') : ''}
                           </span>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <Star className="h-4 w-4 text-gray-400" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <Reply className="h-4 w-4 text-gray-600" />
-                          </Button>
                         </div>
                       </div>
                     </div>
@@ -839,7 +866,12 @@ export default function TicketPage() {
                                   {formatFileSize(attachment.size)}
                                 </p>
                               </div>
-                              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => handleDownloadAttachment(attachment.id, attachment.filename)}
+                              >
                                 <Download className="h-4 w-4" />
                               </Button>
                             </div>
@@ -1109,7 +1141,12 @@ export default function TicketPage() {
                                             {formatFileSize(attachment.size)}
                                           </p>
                                         </div>
-                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={() => handleDownloadAttachment(attachment.id, attachment.filename)}
+                                        >
                                           <Download className="h-4 w-4" />
                                         </Button>
                                       </div>
@@ -1149,6 +1186,7 @@ export default function TicketPage() {
                       onChange={setReplyContent}
                       ticketId={ticketId as string}
                       enableAI={true}
+                      onAttachmentsChange={setReplyAttachments}
                     />
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1215,6 +1253,7 @@ export default function TicketPage() {
                       onChange={setReplyContent}
                       ticketId={ticketId as string}
                       enableAI={true}
+                      onAttachmentsChange={setReplyAttachments}
                     />
 
                     <div className="flex items-center justify-between">

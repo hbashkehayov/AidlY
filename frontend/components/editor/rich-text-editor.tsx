@@ -15,7 +15,6 @@ import {
   Quote,
   Undo,
   Redo,
-  Link as LinkIcon,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -23,12 +22,14 @@ import {
   Minimize2,
   Sparkles,
   Loader2,
+  Paperclip,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Toggle } from '@/components/ui/toggle';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import {
@@ -51,6 +52,9 @@ interface RichTextEditorProps {
   maxHeight?: string;
   ticketId?: string;
   enableAI?: boolean;
+  onAttachmentsChange?: (files: File[]) => void;
+  maxFileSize?: number; // in MB
+  allowedFileTypes?: string[];
 }
 
 export function RichTextEditor({
@@ -63,11 +67,16 @@ export function RichTextEditor({
   maxHeight = '500px',
   ticketId,
   enableAI = true,
+  onAttachmentsChange,
+  maxFileSize = 10, // 10MB default
+  allowedFileTypes = ['image/*', '.pdf', '.doc', '.docx', '.txt', '.zip'],
 }: RichTextEditorProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showAIDialog, setShowAIDialog] = useState(false);
   const [editedSuggestion, setEditedSuggestion] = useState('');
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
     extensions: [
@@ -96,10 +105,11 @@ export function RichTextEditor({
       attributes: {
         class: cn(
           'prose prose-sm dark:prose-invert max-w-none p-4 focus:outline-none',
-          'overflow-y-auto transition-all duration-300 ease-in-out',
+          'transition-all duration-300 ease-in-out',
+          !isExpanded && 'overflow-y-auto',
           className
         ),
-        style: `min-height: ${isExpanded ? '400px' : minHeight}; max-height: ${isExpanded ? '80vh' : maxHeight};`,
+        style: !isExpanded ? `min-height: ${minHeight}; max-height: ${maxHeight};` : undefined,
       },
     },
     immediatelyRender: false, // Prevent SSR hydration issues
@@ -110,10 +120,8 @@ export function RichTextEditor({
   }
 
   const addLink = () => {
-    const url = window.prompt('Enter URL:');
-    if (url) {
-      editor.chain().focus().setLink({ href: url }).run();
-    }
+    // Trigger file attachment instead of URL prompt
+    fileInputRef.current?.click();
   };
 
   const handleAIAutoWrite = async () => {
@@ -176,8 +184,75 @@ export function RichTextEditor({
     setEditedSuggestion('');
   };
 
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const newFiles: File[] = [];
+    const maxSizeBytes = maxFileSize * 1024 * 1024;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      // Validate file size
+      if (file.size > maxSizeBytes) {
+        toast.error(`${file.name} is too large. Maximum file size is ${maxFileSize}MB`);
+        continue;
+      }
+
+      newFiles.push(file);
+    }
+
+    if (newFiles.length > 0) {
+      const updatedAttachments = [...attachments, ...newFiles];
+      setAttachments(updatedAttachments);
+      onAttachmentsChange?.(updatedAttachments);
+      toast.success(`${newFiles.length} file(s) attached successfully`);
+    }
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    const updatedAttachments = attachments.filter((_, i) => i !== index);
+    setAttachments(updatedAttachments);
+    onAttachmentsChange?.(updatedAttachments);
+    toast.success('Attachment removed');
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
   return (
     <>
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept={allowedFileTypes.join(',')}
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      {/* Backdrop overlay when expanded */}
+      {isExpanded && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 animate-in fade-in duration-200"
+          onClick={() => setIsExpanded(false)}
+        />
+      )}
+
       {/* AI Suggestion Dialog */}
       <Dialog open={showAIDialog} onOpenChange={setShowAIDialog}>
         <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
@@ -222,11 +297,11 @@ export function RichTextEditor({
 
       <div className={cn(
         'border rounded-lg transition-all duration-300 ease-in-out',
-        isExpanded && 'fixed inset-4 z-50 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200'
+        isExpanded && 'fixed inset-4 md:inset-8 lg:inset-16 z-50 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col'
       )}>
         {/* Toolbar */}
-      <div className="border-b p-2 flex items-center justify-between flex-wrap gap-2 bg-muted/50">
-        <div className="flex items-center gap-1">
+      <div className="border-b p-2 flex items-start justify-between gap-2 bg-muted/50 shrink-0">
+        <div className="flex items-center gap-x-1 gap-y-2 flex-wrap">
           <Toggle
             size="sm"
             pressed={editor.isActive('bold')}
@@ -249,7 +324,7 @@ export function RichTextEditor({
             <UnderlineIcon className="h-4 w-4" />
           </Toggle>
 
-          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Separator orientation="vertical" className="h-6 mx-1 self-center" />
 
           <Toggle
             size="sm"
@@ -273,7 +348,7 @@ export function RichTextEditor({
             <Quote className="h-4 w-4" />
           </Toggle>
 
-          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Separator orientation="vertical" className="h-6 mx-1 self-center" />
 
           <Toggle
             size="sm"
@@ -297,18 +372,19 @@ export function RichTextEditor({
             <AlignRight className="h-4 w-4" />
           </Toggle>
 
-          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Separator orientation="vertical" className="h-6 mx-1 self-center" />
 
           <Button
             size="sm"
             variant="ghost"
             onClick={addLink}
             className="h-8"
+            title="Attach Files"
           >
-            <LinkIcon className="h-4 w-4" />
+            <Paperclip className="h-4 w-4" />
           </Button>
 
-          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Separator orientation="vertical" className="h-6 mx-1 self-center" />
 
           {enableAI && ticketId && (
             <>
@@ -328,7 +404,7 @@ export function RichTextEditor({
                 <span className="text-xs font-medium">AI Write</span>
               </Button>
 
-              <Separator orientation="vertical" className="h-6 mx-1" />
+              <Separator orientation="vertical" className="h-6 mx-1 self-center" />
             </>
           )}
 
@@ -357,7 +433,7 @@ export function RichTextEditor({
             size="sm"
             variant="ghost"
             onClick={() => setIsExpanded(!isExpanded)}
-            className="h-8"
+            className="h-8 shrink-0 self-start"
           >
             {isExpanded ? (
               <Minimize2 className="h-4 w-4" />
@@ -369,7 +445,52 @@ export function RichTextEditor({
       </div>
 
         {/* Editor */}
-        <EditorContent editor={editor} />
+        <div className={cn(
+          "flex-1 overflow-y-auto",
+          isExpanded && "flex items-start justify-center p-4"
+        )}>
+          <div className={cn(
+            "w-full",
+            isExpanded && "max-w-4xl"
+          )}>
+            <EditorContent editor={editor} />
+
+            {/* Attachments Display */}
+            {attachments.length > 0 && (
+              <div className="mt-4 px-4 pb-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Paperclip className="h-4 w-4" />
+                  <span>{attachments.length} file{attachments.length !== 1 ? 's' : ''} attached</span>
+                </div>
+                <div className="space-y-2">
+                  {attachments.map((file, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between gap-2 p-2 bg-muted/50 rounded-md group hover:bg-muted transition-colors"
+                    >
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}</p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleRemoveAttachment(index)}
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        title="Remove attachment"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </>
   );

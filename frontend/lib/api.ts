@@ -165,11 +165,35 @@ export const api = {
       const endpoint = hasToken ? `/tickets/${id}/assign` : `/public/tickets/${id}/assign`;
       return ticketApi.post(endpoint, { assigned_agent_id: agentId });
     },
-    addComment: (id: string, content: string, isInternal?: boolean, clientEmail?: string) => {
+    addComment: (id: string, content: string, isInternal?: boolean, clientEmail?: string, attachments?: File[]) => {
       // ALWAYS use public endpoint to avoid authentication issues
       // The backend will handle authentication if present
       const endpoint = `/public/tickets/${id}/comments`;
 
+      // If attachments are provided, use FormData for multipart upload
+      if (attachments && attachments.length > 0) {
+        const formData = new FormData();
+        formData.append('content', content);
+        // Send as 1/0 for boolean fields to work with Laravel validation
+        formData.append('is_internal_note', isInternal ? '1' : '0');
+
+        if (clientEmail) {
+          formData.append('client_email', clientEmail);
+        }
+
+        // Append each attachment
+        attachments.forEach((file, index) => {
+          formData.append(`attachments[${index}]`, file);
+        });
+
+        return ticketApi.post(endpoint, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
+      // No attachments - use regular JSON payload
       const payload: any = {
         content,
         is_internal_note: isInternal || false
@@ -184,6 +208,22 @@ export const api = {
     },
     history: (id: string) =>
       ticketApi.get(`/tickets/${id}/history`),
+  },
+
+  // Attachments
+  attachments: {
+    download: (id: string) => {
+      const hasToken = !!localStorage.getItem('auth_token');
+      const endpoint = hasToken ? `/attachments/${id}/download` : `/public/attachments/${id}/download`;
+      return ticketApi.get(endpoint, {
+        responseType: 'blob', // Important for file downloads
+      });
+    },
+    getTicketAttachments: (ticketId: string) => {
+      const hasToken = !!localStorage.getItem('auth_token');
+      const endpoint = hasToken ? `/tickets/${ticketId}/attachments` : `/public/tickets/${ticketId}/attachments`;
+      return ticketApi.get(endpoint);
+    },
   },
 
   // Statistics (Enhanced with Analytics Service)

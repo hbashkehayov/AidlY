@@ -339,9 +339,43 @@ class SharedMailboxImapService
             $ccArray[] = $cc->mail;
         }
 
-        // Extract and clean email content
+        // Extract and clean email content using improved methods
         $bodyHtml = $message->getHTMLBody();
         $bodyPlain = $message->getTextBody();
+
+        Log::debug('Initial shared mailbox body extraction', [
+            'message_id' => $message->getMessageId(),
+            'html_length' => strlen($bodyHtml ?? ''),
+            'plain_length' => strlen($bodyPlain ?? ''),
+        ]);
+
+        // Check if we need improved extraction (same logic as ImapService)
+        if ($this->needsImprovedExtraction($bodyHtml, $bodyPlain, $message)) {
+            Log::info('Using improved extraction for shared mailbox email', [
+                'message_id' => $message->getMessageId(),
+                'mailbox' => $mailbox->name,
+            ]);
+
+            $extractedHtml = null;
+            $extractedPlain = null;
+
+            // Use the same improved extraction method
+            $this->extractBodiesFromParts($message, $extractedHtml, $extractedPlain);
+
+            if (!empty($extractedPlain) || !empty($extractedHtml)) {
+                $bodyPlain = $extractedPlain ?: $bodyPlain;
+                $bodyHtml = $extractedHtml ?: $bodyHtml;
+
+                Log::info('Improved extraction results for shared mailbox', [
+                    'html_length' => strlen($bodyHtml ?? ''),
+                    'plain_length' => strlen($bodyPlain ?? ''),
+                ]);
+            }
+        }
+
+        // Clean the body content to remove attachment IDs
+        $bodyHtml = $this->cleanBodyContent($bodyHtml);
+        $bodyPlain = $this->cleanBodyContent($bodyPlain);
 
         // Prefer plain text, fallback to HTML converted to text
         $content = $bodyPlain;
@@ -644,5 +678,192 @@ class SharedMailboxImapService
                 'message' => 'Connection test failed: ' . $e->getMessage(),
             ];
         }
+    }
+
+    /**
+     * Check if body content needs improved extraction (same as ImapService)
+     */
+    protected function needsImprovedExtraction(?string $bodyHtml, ?string $bodyPlain, Message $message): bool
+    {
+        // If both are empty or null - use improved extraction
+        if (empty($bodyHtml) && empty($bodyPlain)) {
+            return true;
+        }
+
+        // If either body is very short (< 10 chars), likely failed extraction
+        $htmlLength = strlen($bodyHtml ?? '');
+        $plainLength = strlen($bodyPlain ?? '');
+        if (($htmlLength > 0 && $htmlLength < 10) || ($plainLength > 0 && $plainLength < 10)) {
+            return true;
+        }
+
+        // Check for suspicious patterns
+        $combined = ($bodyHtml ?? '') . ($bodyPlain ?? '');
+
+        // Pattern 1: Attachment content IDs
+        if (preg_match('/\b[a-f0-9]{32}\b/i', $combined)) {
+            return true;
+        }
+
+        // Pattern 2: MIME boundary markers
+        if (preg_match('/--[=_-]{10,}/i', $combined)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Extract bodies from message parts (same as ImapService)
+     */
+    protected function extractBodiesFromParts(Message $message, &$bodyHtml, &$bodyPlain)
+    {
+        try {
+            $structure = $message->getStructure();
+            if (!$structure) {
+                return;
+            }
+
+            $parts = $this->getAllMessageParts($message);
+
+            foreach ($parts as $partInfo) {
+                $mimeType = strtolower($partInfo['type']);
+                $disposition = strtolower($partInfo['disposition'] ?? '');
+                $isInline = $partInfo['is_inline'] ?? false;
+
+                // Skip attachments but NOT inline parts
+                if ($disposition === 'attachment' && !$isInline) {
+                    continue;
+                }
+
+                try {
+                    $content = $message->getBodyText($partInfo['section']);
+                    if (empty($content)) {
+                        continue;
+                    }
+
+                    // Clean the content immediately
+                    $content = $this->cleanBodyContent($content);
+                    if (empty($content)) {
+                        continue;
+                    }
+
+                    // Assign content based on MIME type
+                    if ($mimeType === 'text/plain' && empty($bodyPlain)) {
+                        $bodyPlain = $content;
+                    } elseif ($mimeType === 'text/html' && empty($bodyHtml)) {
+                        $bodyHtml = $content;
+                    }
+
+                    if (!empty($bodyHtml) && !empty($bodyPlain)) {
+                        break;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Failed to extract part content in shared mailbox', [
+                        'section' => $partInfo['section'],
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to extract bodies from parts in shared mailbox', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Get all message parts with metadata (same as ImapService)
+     */
+    protected function getAllMessageParts(Message $message, $structure = null, $section = '1', &$parts = []): array
+    {
+        if ($structure === null) {
+            $structure = $message->getStructure();
+            $parts = [];
+        }
+
+        if (!$structure) {
+            return $parts;
+        }
+
+        // Get MIME type
+        $type = 'text/plain';
+        if (isset($structure->subtype)) {
+            $type = strtolower($structure->type ?? 'text') . '/' . strtolower($structure->subtype);
+        }
+
+        // Get disposition
+        $disposition = null;
+        $isInline = false;
+
+        if (isset($structure->disposition)) {
+            $disposition = strtolower($structure->disposition);
+            if ($disposition === 'inline') {
+                $isInline = true;
+                if (strpos($type, 'text/') === 0) {
+                    $disposition = null;
+                }
+            }
+        } elseif (isset($structure->ifdisposition) && $structure->ifdisposition) {
+            $disposition = 'attachment';
+        }
+
+        if (strpos($type, 'text/') === 0 && empty($disposition)) {
+            $isInline = true;
+        }
+
+        $parts[] = [
+            'section' => $section,
+            'type' => $type,
+            'disposition' => $disposition,
+            'is_inline' => $isInline,
+        ];
+
+        // Recursively process sub-parts
+        if (isset($structure->parts) && is_array($structure->parts)) {
+            foreach ($structure->parts as $index => $subPart) {
+                $subSection = $section . '.' . ($index + 1);
+                $this->getAllMessageParts($message, $subPart, $subSection, $parts);
+            }
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Clean body content from attachment IDs (same as ImapService)
+     */
+    protected function cleanBodyContent(?string $content): ?string
+    {
+        if (empty($content)) {
+            return $content;
+        }
+
+        $originalLength = strlen($content);
+
+        // Remove attachment ID patterns
+        $content = preg_replace('/\b[a-f0-9]{32,}\b/i', '', $content);
+        $content = preg_replace('/^[a-f0-9]{24,}\s*$/m', '', $content);
+
+        // Remove MIME boundary markers
+        $content = preg_replace('/--[=_-]{10,}.*/m', '', $content);
+
+        // Remove Content headers that leaked through
+        $content = preg_replace('/^Content-Type:.*$/mi', '', $content);
+        $content = preg_replace('/^Content-Transfer-Encoding:.*$/mi', '', $content);
+        $content = preg_replace('/^Content-Disposition:.*$/mi', '', $content);
+
+        // Remove excessive whitespace
+        $content = preg_replace('/\n{3,}/', "\n\n", $content);
+        $content = preg_replace('/[ \t]{2,}/', ' ', $content);
+        $content = trim($content);
+
+        // If content is now too short, return null
+        $cleanedTextOnly = strip_tags($content);
+        if (strlen($cleanedTextOnly) < 3) {
+            return null;
+        }
+
+        return $content;
     }
 }
