@@ -100,6 +100,10 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
             $router->get('trends', 'StatsController@getTicketTrends');
             $router->get('recent', 'StatsController@getRecentTickets');
             $router->get('notification-counts', 'StatsController@getNotificationCounts');
+
+            // User ticket statistics (for team page performance)
+            $router->get('users/tickets', 'UserStatsController@getUserTicketStats');
+            $router->get('users/{userId}/tickets', 'UserStatsController@getUserTicketStatsById');
         });
 
         // Ticket management routes

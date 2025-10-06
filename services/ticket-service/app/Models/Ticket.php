@@ -204,9 +204,16 @@ class Ticket extends Model
         return $this->belongsTo(Category::class);
     }
 
+    /**
+     * Get ticket-level attachments only (excludes comment/reply attachments)
+     * Only returns attachments where comment_id IS NULL
+     * Comment attachments are accessible via ticket.comments.commentAttachments
+     */
     public function attachments(): HasMany
     {
-        return $this->hasMany(Attachment::class)->orderBy('created_at', 'desc');
+        return $this->hasMany(Attachment::class)
+            ->whereNull('comment_id')  // Only initial ticket attachments, not reply attachments
+            ->orderBy('created_at', 'desc');
     }
 
     /**

@@ -82,6 +82,26 @@ export function RichTextEditor({
     extensions: [
       StarterKit.configure({
         heading: false,
+        bulletList: {
+          HTMLAttributes: {
+            class: 'list-disc list-outside ml-4',
+          },
+        },
+        orderedList: {
+          HTMLAttributes: {
+            class: 'list-decimal list-outside ml-4',
+          },
+        },
+        listItem: {
+          HTMLAttributes: {
+            class: 'ml-1',
+          },
+        },
+        blockquote: {
+          HTMLAttributes: {
+            class: 'border-l-4 border-gray-300 pl-4 italic text-gray-700',
+          },
+        },
       }),
       Placeholder.configure({
         placeholder,
@@ -94,17 +114,17 @@ export function RichTextEditor({
         },
       }),
       TextAlign.configure({
-        types: ['paragraph'],
+        types: ['paragraph', 'heading'],
       }),
     ],
-    content,
+    content: content || '',
     onUpdate: ({ editor }) => {
       onChange?.(editor.getHTML());
     },
     editorProps: {
       attributes: {
         class: cn(
-          'prose prose-sm dark:prose-invert max-w-none p-4 focus:outline-none',
+          'tiptap prose prose-sm dark:prose-invert max-w-none p-4 focus:outline-none',
           'transition-all duration-300 ease-in-out',
           !isExpanded && 'overflow-y-auto',
           className
@@ -221,10 +241,6 @@ export function RichTextEditor({
     setAttachments(updatedAttachments);
     onAttachmentsChange?.(updatedAttachments);
     toast.success('Attachment removed');
-  };
-
-  const handleAttachClick = () => {
-    fileInputRef.current?.click();
   };
 
   const formatFileSize = (bytes: number) => {

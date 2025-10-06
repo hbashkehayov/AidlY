@@ -764,13 +764,32 @@ class TicketController extends Controller
             ], 404);
         }
 
+        // Validate request - now accepts JSON with base64 attachments
         $this->validate($request, [
-            'content' => 'required|string',
-            'is_internal_note' => 'boolean',
-            'client_id' => 'string|uuid',
-            'client_email' => 'email',  // Allow client email for public comments
-            'attachments' => 'sometimes|array',  // Accept both file uploads and metadata
+            'content' => 'nullable|string',
+            'is_internal_note' => 'nullable|boolean',
+            'client_id' => 'nullable|string|uuid',
+            'client_email' => 'nullable|email',
+            'attachments' => 'nullable|array',  // Array of base64 attachments or file uploads
+            'attachments.*.filename' => 'sometimes|string',
+            'attachments.*.content_base64' => 'sometimes|string',
         ]);
+
+        // Get content and attachments
+        $content = $request->input('content');
+        $hasAttachments = !empty($request->input('attachments'));
+        $hasAttachmentsInMetadata = isset($request->metadata['has_attachments']) && $request->metadata['has_attachments'];
+
+        // Additional validation: ensure either content or attachments are present
+        // Email comments might have attachments in metadata that will be uploaded separately
+        if (empty($content) && !$hasAttachments && !$hasAttachmentsInMetadata) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'message' => 'Either content or attachments must be provided'
+                ]
+            ], 422);
+        }
 
         try {
             DB::beginTransaction();
@@ -884,15 +903,51 @@ class TicketController extends Controller
                 }
             }
 
+            // If content is empty but attachments exist, provide default message
+            $content = $request->content;
+            if (empty($content) || trim(strip_tags($content)) === '') {
+                if (!empty($attachmentData)) {
+                    $attachmentCount = count($attachmentData);
+                    $content = "<p>[Sent {$attachmentCount} attachment" . ($attachmentCount > 1 ? 's' : '') . "]</p>";
+                } else {
+                    $content = $request->content; // Keep original even if empty
+                }
+            }
+
             $comment = TicketComment::create([
                 'ticket_id' => $ticket->id,
                 'user_id' => $userId,
                 'client_id' => $clientId,
-                'content' => $request->content,
+                'content' => $content,
                 'is_internal_note' => $request->get('is_internal_note', false),
                 'attachments' => !empty($attachmentData) ? $attachmentData : null,
                 'metadata' => !empty($metadata) ? $metadata : null
             ]);
+
+            // Create proper Attachment records for each file (relational database)
+            // This allows proper tracking of which attachment belongs to which comment
+            if (!empty($attachmentData)) {
+                foreach ($attachmentData as $attachmentItem) {
+                    \App\Models\Attachment::create([
+                        'ticket_id' => $ticket->id,
+                        'comment_id' => $comment->id,
+                        'uploaded_by_user_id' => $userId,
+                        'uploaded_by_client_id' => $clientId,
+                        'file_name' => $attachmentItem['filename'],
+                        'file_type' => pathinfo($attachmentItem['filename'], PATHINFO_EXTENSION),
+                        'file_size' => $attachmentItem['size'] ?? null,
+                        'storage_path' => $attachmentItem['path'],
+                        'mime_type' => $attachmentItem['mime_type'] ?? 'application/octet-stream',
+                        'is_inline' => false,
+                    ]);
+                }
+
+                Log::info('Created Attachment records for comment', [
+                    'comment_id' => $comment->id,
+                    'ticket_id' => $ticket->id,
+                    'attachment_count' => count($attachmentData),
+                ]);
+            }
 
             // Automated status management (only for non-internal notes)
             if (!$request->get('is_internal_note', false)) {
@@ -918,6 +973,9 @@ class TicketController extends Controller
                 } catch (\Exception $e) {
                     Log::warning('Failed to send comment notification', ['error' => $e->getMessage()]);
                 }
+
+                // Load comment attachments relationship before sending email
+                $comment->load('commentAttachments');
 
                 // Send email notification to client if this is not an internal note
                 $this->sendCommentNotificationEmail($ticket, $comment);
@@ -1076,14 +1134,61 @@ class TicketController extends Controller
                 ];
 
                 // Add attachments if present
+                // Handle both Collection (from relationship) and array (from JSONB)
+                \Log::info('Checking comment attachments for email', [
+                    'comment_id' => $comment->id,
+                    'has_attachments' => !empty($comment->attachments),
+                    'attachments_type' => !empty($comment->attachments) ? gettype($comment->attachments) : null,
+                    'attachments_count' => !empty($comment->attachments) && is_countable($comment->attachments) ? count($comment->attachments) : 0,
+                ]);
+
                 if (!empty($comment->attachments)) {
-                    $emailData['attachments'] = array_map(function($attachment) {
-                        return [
-                            'filename' => $attachment['filename'],
-                            'path' => storage_path('app/public/' . $attachment['path']),
-                            'mime_type' => $attachment['mime_type'] ?? 'application/octet-stream',
-                        ];
-                    }, $comment->attachments);
+                    $attachments = $comment->attachments;
+
+                    // If it's a Collection, check if not empty and convert
+                    if (is_object($attachments) && method_exists($attachments, 'isNotEmpty')) {
+                        if ($attachments->isNotEmpty()) {
+                            $emailData['attachments'] = $attachments->map(function($attachment) {
+                                $storagePath = $attachment->storage_path ?? $attachment['path'];
+                                // Files are stored in 'public' disk, so construct proper path
+                                $fullPath = storage_path('app/public/' . $storagePath);
+
+                                \Log::info('Preparing email attachment from Collection', [
+                                    'filename' => $attachment->file_name,
+                                    'storage_path' => $storagePath,
+                                    'full_path' => $fullPath,
+                                    'exists' => file_exists($fullPath),
+                                ]);
+
+                                return [
+                                    'filename' => $attachment->file_name ?? $attachment['filename'],
+                                    'path' => $fullPath,
+                                    'mime_type' => $attachment->mime_type ?? $attachment['mime_type'] ?? 'application/octet-stream',
+                                ];
+                            })->toArray();
+                        }
+                    }
+                    // If it's an array (from JSONB), process directly
+                    elseif (is_array($attachments) && count($attachments) > 0) {
+                        $emailData['attachments'] = array_map(function($attachment) {
+                            $storagePath = $attachment['storage_path'] ?? $attachment['path'] ?? '';
+                            // Files are stored in 'public' disk, so construct proper path
+                            $fullPath = storage_path('app/public/' . $storagePath);
+
+                            \Log::info('Preparing email attachment from array', [
+                                'filename' => $attachment['file_name'] ?? $attachment['filename'],
+                                'storage_path' => $storagePath,
+                                'full_path' => $fullPath,
+                                'exists' => file_exists($fullPath),
+                            ]);
+
+                            return [
+                                'filename' => $attachment['file_name'] ?? $attachment['filename'] ?? 'attachment',
+                                'path' => $fullPath,
+                                'mime_type' => $attachment['mime_type'] ?? 'application/octet-stream',
+                            ];
+                        }, $attachments);
+                    }
                 }
 
                 \Log::info('DEBUGGING: Sending email request', [

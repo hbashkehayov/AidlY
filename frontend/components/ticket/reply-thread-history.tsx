@@ -18,6 +18,15 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
+// Utility function to format file sizes
+function formatFileSize(bytes: number): string {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
 interface TicketComment {
   id: string;
   user_id?: string;
@@ -165,6 +174,45 @@ export function ReplyThreadHistory({
                           className="text-sm text-foreground prose prose-sm max-w-none dark:prose-invert"
                           dangerouslySetInnerHTML={{ __html: comment.content }}
                         />
+
+                        {/* Display attachments for this comment */}
+                        {comment.attachments && comment.attachments.length > 0 && (
+                          <div className="mt-3 pt-3 border-t space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                              </svg>
+                              {comment.attachments.length} attachment{comment.attachments.length !== 1 ? 's' : ''}
+                            </p>
+                            <div className="space-y-1">
+                              {comment.attachments.map((attachment: any, idx: number) => (
+                                <a
+                                  key={attachment.id || idx}
+                                  href={attachment.url || attachment.download_url || `/api/v1/attachments/${attachment.id}/download`}
+                                  download
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-2 px-2 py-1.5 text-xs bg-muted/50 hover:bg-muted rounded border border-border/50 hover:border-border transition-colors group"
+                                >
+                                  <svg className="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                  </svg>
+                                  <span className="flex-1 truncate font-medium text-foreground group-hover:text-primary">
+                                    {attachment.file_name || attachment.filename || 'Attachment'}
+                                  </span>
+                                  {attachment.file_size && (
+                                    <span className="text-muted-foreground">
+                                      {formatFileSize(attachment.file_size)}
+                                    </span>
+                                  )}
+                                  <svg className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                  </svg>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

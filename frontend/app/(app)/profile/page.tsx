@@ -62,16 +62,117 @@ const roleConfig = {
 export default function ProfilePage() {
   const router = useRouter();
   const { user } = useAuth();
+  const [currentPage, setCurrentPage] = useState(1);
 
-  // Fetch assigned tickets for this user
-  const { data: tickets, isLoading: isLoadingTickets } = useQuery({
-    queryKey: ['user-tickets', user?.id],
+  // Check if user is admin
+  const isAdmin = user?.role === 'admin';
+
+  // Base params for filtering
+  const baseParams = isAdmin ? {} : { assigned_agent_id: user?.id };
+
+  // Fetch tickets for display (paginated)
+  const { data: ticketsResponse, isLoading: isLoadingTickets } = useQuery({
+    queryKey: ['user-tickets', user?.id, user?.role, currentPage],
     queryFn: async () => {
-      const response = await api.tickets.list({ assigned_to: user?.id });
-      return response.data?.data || response.data || [];
+      const params = { ...baseParams, page: currentPage, per_page: 20 };
+      const response = await api.tickets.list(params);
+      return response.data;
     },
     enabled: !!user?.id,
   });
+
+  // Get TOTAL count from metadata
+  const { data: totalCountResponse } = useQuery({
+    queryKey: ['user-tickets-total', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Get OPEN tickets count - we need to sum multiple statuses
+  // Query for 'new' status
+  const { data: newCountResponse } = useQuery({
+    queryKey: ['user-tickets-new', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'new', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Query for 'open' status
+  const { data: openStatusCountResponse } = useQuery({
+    queryKey: ['user-tickets-open-status', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'open', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Query for 'pending' status
+  const { data: pendingCountResponse } = useQuery({
+    queryKey: ['user-tickets-pending', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'pending', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Query for 'on_hold' status
+  const { data: onHoldCountResponse } = useQuery({
+    queryKey: ['user-tickets-on-hold', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'on_hold', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Query for 'resolved' status
+  const { data: resolvedStatusCountResponse } = useQuery({
+    queryKey: ['user-tickets-resolved-status', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'resolved', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Query for 'closed' status
+  const { data: closedCountResponse } = useQuery({
+    queryKey: ['user-tickets-closed', user?.id, user?.role],
+    queryFn: async () => {
+      const params = { ...baseParams, status: 'closed', page: 1, per_page: 1 };
+      const response = await api.tickets.list(params);
+      return response.data;
+    },
+    enabled: !!user?.id,
+  });
+
+  const tickets = ticketsResponse?.data || [];
+  const totalTickets = totalCountResponse?.meta?.total || 0;
+
+  // Sum up the open ticket statuses
+  const openTickets = (newCountResponse?.meta?.total || 0) +
+                      (openStatusCountResponse?.meta?.total || 0) +
+                      (pendingCountResponse?.meta?.total || 0) +
+                      (onHoldCountResponse?.meta?.total || 0);
+
+  // Sum up the resolved ticket statuses
+  const resolvedTickets = (resolvedStatusCountResponse?.meta?.total || 0) +
+                          (closedCountResponse?.meta?.total || 0);
+
+  const totalPages = ticketsResponse?.meta?.last_page || 1;
 
   const getStatusBadge = (status: string) => {
     const config = statusConfig[status as keyof typeof statusConfig];
@@ -115,14 +216,6 @@ export default function ProfilePage() {
     );
   }
 
-  // Calculate ticket statistics
-  const openTickets = tickets?.filter((t: any) =>
-    ['new', 'open', 'pending', 'on_hold'].includes(t.status)
-  ).length || 0;
-
-  const closedTickets = tickets?.filter((t: any) =>
-    ['resolved', 'closed'].includes(t.status)
-  ).length || 0;
 
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
@@ -198,8 +291,10 @@ export default function ProfilePage() {
             <Ticket className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{tickets?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">Assigned to you</p>
+            <div className="text-2xl font-bold">{totalTickets}</div>
+            <p className="text-xs text-muted-foreground">
+              {isAdmin ? 'Total in system' : 'Assigned to you'}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -209,7 +304,9 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{openTickets}</div>
-            <p className="text-xs text-muted-foreground">Requires attention</p>
+            <p className="text-xs text-muted-foreground">
+              {isAdmin ? 'Currently open' : 'Requires attention'}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -218,8 +315,10 @@ export default function ProfilePage() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{closedTickets}</div>
-            <p className="text-xs text-muted-foreground">Successfully resolved</p>
+            <div className="text-2xl font-bold">{resolvedTickets}</div>
+            <p className="text-xs text-muted-foreground">
+              {isAdmin ? 'Total resolved' : 'Successfully resolved'}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -234,8 +333,10 @@ export default function ProfilePage() {
         <TabsContent value="tickets" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Assigned Tickets</CardTitle>
-              <CardDescription>Tickets currently assigned to you</CardDescription>
+              <CardTitle>{isAdmin ? 'All Tickets' : 'Assigned Tickets'}</CardTitle>
+              <CardDescription>
+                {isAdmin ? 'All tickets in the system' : 'Tickets currently assigned to you'}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {isLoadingTickets ? (
@@ -268,7 +369,7 @@ export default function ProfilePage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {ticket.client_name || 'Unknown'}
+                          {ticket.client?.name || ticket.client?.email || 'Unknown'}
                         </TableCell>
                         <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                         <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
@@ -284,7 +385,34 @@ export default function ProfilePage() {
                 </Table>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
-                  No tickets assigned to you yet
+                  {isAdmin ? 'No tickets in the system yet' : 'No tickets assigned to you yet'}
+                </div>
+              )}
+
+              {/* Pagination Controls */}
+              {tickets && tickets.length > 0 && totalPages > 1 && (
+                <div className="flex items-center justify-between px-2 py-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages} ({totalTickets} total tickets)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>

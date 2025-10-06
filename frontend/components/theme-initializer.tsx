@@ -16,13 +16,13 @@ export function ThemeInitializer() {
         console.log(`Loading theme for user ${user.id}:`, savedTheme);
         setTheme(savedTheme);
       } else {
-        console.log(`No saved theme for user ${user.id}, using system default`);
-        setTheme('system');
+        console.log(`No saved theme for user ${user.id}, using light default`);
+        setTheme('light');
       }
     } else {
-      // Use system theme for non-authenticated users
-      console.log('Not logged in, using system theme');
-      setTheme('system');
+      // Use light theme for non-authenticated users
+      console.log('Not logged in, using light theme');
+      setTheme('light');
     }
   }, [user?.id, isAuthenticated, setTheme]);
 

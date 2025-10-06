@@ -4,10 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\TicketComment;
 use App\Models\Ticket;
+use App\Models\Attachment;
 use App\Services\WebhookService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class CommentController extends Controller
 {
@@ -80,6 +82,9 @@ class CommentController extends Controller
             $query->with('ticket');
         }
 
+        // ALWAYS load attachments relationship for comments
+        $query->with('commentAttachments');
+
         // Sorting
         $sort = $request->get('sort', 'created_at');
         $direction = $request->get('direction', 'desc');
@@ -135,7 +140,7 @@ class CommentController extends Controller
      */
     public function show(string $id): JsonResponse
     {
-        $comment = TicketComment::with('ticket')->find($id);
+        $comment = TicketComment::with(['ticket', 'commentAttachments'])->find($id);
 
         if (!$comment) {
             return response()->json([
@@ -163,7 +168,7 @@ class CommentController extends Controller
             'is_internal_note' => 'boolean',
             'is_ai_generated' => 'boolean',
             'ai_suggestion_used' => 'nullable|string',
-            'attachments' => 'nullable|array'
+            'attachments.*' => 'nullable|file|max:10240', // Max 10MB per file
         ]);
 
         // Verify ticket exists
@@ -188,11 +193,43 @@ class CommentController extends Controller
                 'is_internal_note' => $request->get('is_internal_note', false),
                 'is_ai_generated' => $request->get('is_ai_generated', false),
                 'ai_suggestion_used' => $request->get('ai_suggestion_used'),
-                'attachments' => $request->get('attachments', [])
             ]);
 
-            // Load the comment with ticket relationship
-            $comment->load('ticket');
+            // Handle file attachments if provided
+            if ($request->hasFile('attachments')) {
+                foreach ($request->file('attachments') as $file) {
+                    // Generate unique file path
+                    $fileName = $file->getClientOriginalName();
+                    $sanitizedFileName = \Str::slug(pathinfo($fileName, PATHINFO_FILENAME));
+                    $extension = $file->getClientOriginalExtension();
+                    $uniqueFileName = $sanitizedFileName . '_' . time() . '_' . \Str::random(8) . '.' . $extension;
+                    $storagePath = "tickets/{$request->ticket_id}/attachments/{$uniqueFileName}";
+
+                    // Store file
+                    Storage::putFileAs(
+                        "tickets/{$request->ticket_id}/attachments",
+                        $file,
+                        $uniqueFileName
+                    );
+
+                    // Create attachment record
+                    Attachment::create([
+                        'ticket_id' => $request->ticket_id,
+                        'comment_id' => $comment->id,
+                        'uploaded_by_user_id' => $request->user()->id ?? null,
+                        'uploaded_by_client_id' => $request->get('client_id'),
+                        'file_name' => $fileName,
+                        'file_type' => $extension,
+                        'file_size' => $file->getSize(),
+                        'storage_path' => $storagePath,
+                        'mime_type' => $file->getMimeType(),
+                        'is_inline' => false,
+                    ]);
+                }
+            }
+
+            // Load the comment with ticket and attachments relationships
+            $comment->load(['ticket', 'commentAttachments']);
 
             DB::commit();
 

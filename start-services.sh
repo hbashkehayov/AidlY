@@ -8,27 +8,27 @@ pkill -f "php -S" 2>/dev/null
 
 # Start Auth Service (port 8001)
 echo "Starting Auth Service on port 8001..."
-cd /root/AidlY/services/auth-service && php -S localhost:8001 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/auth-service && php -S 0.0.0.0:8001 -t public/ > /dev/null 2>&1 &
 
 # Start Ticket Service (port 8002)
 echo "Starting Ticket Service on port 8002..."
-cd /root/AidlY/services/ticket-service && php -S localhost:8002 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/ticket-service && php -S 0.0.0.0:8002 -t public/ > /dev/null 2>&1 &
 
 # Start Client Service (port 8003)
 echo "Starting Client Service on port 8003..."
-cd /root/AidlY/services/client-service && php -S localhost:8003 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/client-service && php -S 0.0.0.0:8003 -t public/ > /dev/null 2>&1 &
 
 # Start Notification Service (port 8004)
 echo "Starting Notification Service on port 8004..."
-cd /root/AidlY/services/notification-service && php -S localhost:8004 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/notification-service && php -S 0.0.0.0:8004 -t public/ > /dev/null 2>&1 &
 
 # Start Email Service (port 8005)
 echo "Starting Email Service on port 8005..."
-cd /root/AidlY/services/email-service && php -S localhost:8005 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/email-service && php -S 0.0.0.0:8005 -t public/ > /dev/null 2>&1 &
 
 # Start Analytics Service (port 8007)
 echo "Starting Analytics Service on port 8007..."
-cd /root/AidlY/services/analytics-service && php -S localhost:8007 -t public/ > /dev/null 2>&1 &
+cd /root/AidlY/services/analytics-service && php -S 0.0.0.0:8007 -t public/ > /dev/null 2>&1 &
 
 # Wait a moment for services to start
 sleep 2

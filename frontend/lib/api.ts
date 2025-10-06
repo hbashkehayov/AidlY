@@ -7,6 +7,7 @@ const TICKET_API_URL = process.env.NEXT_PUBLIC_TICKET_API_URL || 'http://localho
 const CLIENT_API_URL = process.env.NEXT_PUBLIC_CLIENT_API_URL || 'http://localhost:8003/api/v1';
 const ANALYTICS_API_URL = process.env.NEXT_PUBLIC_ANALYTICS_API_URL || 'http://localhost:8007/api/v1';
 const NOTIFICATION_API_URL = process.env.NEXT_PUBLIC_NOTIFICATION_API_URL || 'http://localhost:8004/api/v1';
+const EMAIL_API_URL = process.env.NEXT_PUBLIC_EMAIL_API_URL || 'http://localhost:8005/api/v1';
 const AI_API_URL = process.env.NEXT_PUBLIC_AI_API_URL || 'http://localhost:8006/api/v1';
 
 // Create axios instances for each service
@@ -48,6 +49,13 @@ export const analyticsApi = axios.create({
 
 export const notificationApi = axios.create({
   baseURL: NOTIFICATION_API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+export const emailApi = axios.create({
+  baseURL: EMAIL_API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -105,6 +113,7 @@ addAuthInterceptor(ticketApi);
 addAuthInterceptor(clientApi);
 addAuthInterceptor(analyticsApi);
 addAuthInterceptor(notificationApi);
+addAuthInterceptor(emailApi);
 addAuthInterceptor(aiApi);
 
 // API Methods
@@ -160,37 +169,55 @@ export const api = {
     },
     stats: () =>
       ticketApi.get('/tickets/stats'),
+    getUserTicketStats: () =>
+      ticketApi.get('/stats/users/tickets'),
+    getUserTicketStatsById: (userId: string) =>
+      ticketApi.get(`/stats/users/${userId}/tickets`),
     assign: (id: string, agentId: string) => {
       const hasToken = !!localStorage.getItem('auth_token');
       const endpoint = hasToken ? `/tickets/${id}/assign` : `/public/tickets/${id}/assign`;
       return ticketApi.post(endpoint, { assigned_agent_id: agentId });
     },
-    addComment: (id: string, content: string, isInternal?: boolean, clientEmail?: string, attachments?: File[]) => {
+    addComment: async (id: string, content: string, isInternal?: boolean, clientEmail?: string, attachments?: File[]) => {
       // ALWAYS use public endpoint to avoid authentication issues
       // The backend will handle authentication if present
       const endpoint = `/public/tickets/${id}/comments`;
 
-      // If attachments are provided, use FormData for multipart upload
+      // If attachments are provided, convert to base64 and send as JSON
+      // This works better with Lumen than multipart/form-data
       if (attachments && attachments.length > 0) {
-        const formData = new FormData();
-        formData.append('content', content);
-        // Send as 1/0 for boolean fields to work with Laravel validation
-        formData.append('is_internal_note', isInternal ? '1' : '0');
+        // Convert files to base64
+        const attachmentPromises = attachments.map(async (file) => {
+          return new Promise<any>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = (reader.result as string).split(',')[1]; // Remove data:*/*;base64, prefix
+              resolve({
+                filename: file.name,
+                content_base64: base64,
+                mime_type: file.type,
+                size: file.size,
+              });
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        });
+
+        const attachmentData = await Promise.all(attachmentPromises);
+
+        // Send as JSON with base64 attachments
+        const payload: any = {
+          content: content || '',
+          is_internal_note: isInternal || false,
+          attachments: attachmentData,
+        };
 
         if (clientEmail) {
-          formData.append('client_email', clientEmail);
+          payload.client_email = clientEmail;
         }
 
-        // Append each attachment
-        attachments.forEach((file, index) => {
-          formData.append(`attachments[${index}]`, file);
-        });
-
-        return ticketApi.post(endpoint, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
+        return ticketApi.post(endpoint, payload);
       }
 
       // No attachments - use regular JSON payload
@@ -597,6 +624,110 @@ export const api = {
         analyticsApi.get('/metrics/agent-metrics', { params }),
       clientMetrics: (params?: any) =>
         analyticsApi.get('/metrics/client-metrics', { params }),
+    },
+  },
+
+  // Email Service
+  email: {
+    // Email Accounts Management
+    accounts: {
+      list: () =>
+        emailApi.get('/accounts'),
+      agentAccounts: () =>
+        emailApi.get('/accounts/agents'),
+      get: (id: string) =>
+        emailApi.get(`/accounts/${id}`),
+      create: (data: any) =>
+        emailApi.post('/accounts', data),
+      update: (id: string, data: any) =>
+        emailApi.put(`/accounts/${id}`, data),
+      updateByUser: (userId: string, data: any) =>
+        emailApi.put(`/accounts/user/${userId}`, data),
+      disableByUser: (userId: string) =>
+        emailApi.put(`/accounts/user/${userId}/disable`),
+      delete: (id: string) =>
+        emailApi.delete(`/accounts/${id}`),
+      // Testing
+      testImap: (id: string) =>
+        emailApi.post(`/accounts/${id}/test-imap`),
+      testSmtp: (id: string) =>
+        emailApi.post(`/accounts/${id}/test-smtp`),
+      stats: (id: string) =>
+        emailApi.get(`/accounts/${id}/stats`),
+      fetchEmails: (id: string) =>
+        emailApi.post(`/accounts/${id}/fetch`),
+    },
+
+    // Email Templates
+    templates: {
+      list: () =>
+        emailApi.get('/templates'),
+      categories: () =>
+        emailApi.get('/templates/categories'),
+      createDefaults: () =>
+        emailApi.post('/templates/create-defaults'),
+      get: (id: string) =>
+        emailApi.get(`/templates/${id}`),
+      create: (data: any) =>
+        emailApi.post('/templates', data),
+      update: (id: string, data: any) =>
+        emailApi.put(`/templates/${id}`, data),
+      delete: (id: string) =>
+        emailApi.delete(`/templates/${id}`),
+      variables: (id: string) =>
+        emailApi.get(`/templates/${id}/variables`),
+      preview: (id: string, data: any) =>
+        emailApi.post(`/templates/${id}/preview`, data),
+    },
+
+    // Email Queue & Processing
+    queue: {
+      list: (params?: any) =>
+        emailApi.get('/emails', { params }),
+      stats: () =>
+        emailApi.get('/emails/stats'),
+      get: (id: string) =>
+        emailApi.get(`/emails/${id}`),
+      fetchAll: () =>
+        emailApi.post('/emails/fetch'),
+      processToTickets: () =>
+        emailApi.post('/emails/process'),
+      retry: (id: string) =>
+        emailApi.post(`/emails/${id}/retry`),
+    },
+
+    // Send Emails
+    send: (data: {
+      to: string | string[];
+      subject: string;
+      body_html: string;
+      body_plain?: string;
+      from_account_id?: string;
+      cc?: string[];
+      bcc?: string[];
+      attachments?: any[];
+    }) =>
+      emailApi.post('/emails/send', data),
+    sendTemplate: (data: {
+      template_id: string;
+      to: string | string[];
+      variables?: any;
+      from_account_id?: string;
+    }) =>
+      emailApi.post('/emails/send-template', data),
+    sendTicketNotification: (data: {
+      ticket_id: string;
+      notification_type: string;
+      recipient_email: string;
+    }) =>
+      emailApi.post('/emails/send-notification', data),
+
+    // Gmail Setup Helper
+    gmail: {
+      instructions: () =>
+        emailApi.get('/gmail/instructions'),
+      recommendedSettings: () =>
+        emailApi.get('/gmail/recommended-settings'),
     },
   },
 

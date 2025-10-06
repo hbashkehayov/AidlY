@@ -329,14 +329,35 @@ class SmtpService
 
         // Attachments
         if (!empty($emailData['attachments'])) {
-            foreach ($emailData['attachments'] as $attachment) {
+            \Log::info('Processing email attachments', [
+                'count' => count($emailData['attachments']),
+                'attachments' => array_map(function($a) {
+                    return [
+                        'filename' => $a['filename'] ?? 'unknown',
+                        'has_path' => isset($a['path']),
+                        'has_base64' => isset($a['content_base64']),
+                        'path' => $a['path'] ?? null,
+                        'path_exists' => isset($a['path']) ? file_exists($a['path']) : null,
+                    ];
+                }, $emailData['attachments'])
+            ]);
+
+            foreach ($emailData['attachments'] as $index => $attachment) {
                 if (isset($attachment['content_base64'])) {
                     $content = base64_decode($attachment['content_base64']);
                     $message->attach($content, $attachment['filename'], $attachment['mime_type'] ?? null);
+                    \Log::debug('Attached base64 content', ['filename' => $attachment['filename'], 'size' => strlen($content)]);
                 } elseif (isset($attachment['path'])) {
-                    $message->attachFromPath($attachment['path'], $attachment['filename'] ?? null);
+                    if (file_exists($attachment['path'])) {
+                        $message->attachFromPath($attachment['path'], $attachment['filename'] ?? null);
+                        \Log::debug('Attached file from path', ['filename' => $attachment['filename'], 'path' => $attachment['path']]);
+                    } else {
+                        \Log::error('Attachment file not found', ['path' => $attachment['path'], 'filename' => $attachment['filename']]);
+                    }
                 }
             }
+        } else {
+            \Log::debug('No attachments in email data');
         }
 
         return $message;

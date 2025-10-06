@@ -46,6 +46,8 @@ class TicketComment extends Model
         'is_ai_generated' => 'boolean',
         'is_read' => 'boolean',
         'read_at' => 'datetime',
+        // Keep in casts for proper JSON encoding when saving
+        // Accessor will override this when reading if relationship is loaded
         'attachments' => 'array',
         // Email metadata casts
         'to_addresses' => 'array',
@@ -102,6 +104,25 @@ class TicketComment extends Model
     public function commentAttachments(): HasMany
     {
         return $this->hasMany(Attachment::class, 'comment_id')->orderBy('created_at', 'desc');
+    }
+
+    /**
+     * Accessor to make attachments available as 'attachments' in JSON responses
+     * Prioritizes relational data (Attachment records) over JSONB field
+     * Falls back to JSONB if relationship not loaded (backward compatibility)
+     *
+     * Note: The $value parameter is the casted value (array decoded from JSON by Laravel)
+     */
+    public function getAttachmentsAttribute($value)
+    {
+        // If commentAttachments relationship is loaded, use it (new approach)
+        // This returns proper Attachment model instances with all fields
+        if ($this->relationLoaded('commentAttachments')) {
+            return $this->commentAttachments;
+        }
+
+        // Otherwise return the casted value from database (Laravel already decoded JSON → array)
+        return $value;
     }
 
     /**

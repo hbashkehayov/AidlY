@@ -139,14 +139,18 @@ class AttachmentController extends Controller
     }
 
     /**
-     * Get attachments for a ticket
+     * Get ticket-level attachments only (excludes comment/reply attachments)
+     * Only returns attachments from initial ticket creation (comment_id IS NULL)
+     * To get comment attachments, use ticket.comments.commentAttachments
      */
     public function getTicketAttachments($ticketId)
     {
         try {
             $ticket = Ticket::findOrFail($ticketId);
 
+            // Only get ticket-level attachments (not comment/reply attachments)
             $attachments = Attachment::where('ticket_id', $ticketId)
+                ->whereNull('comment_id')  // Exclude reply/comment attachments
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->map(function ($attachment) {

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\EmailAccount;
 use App\Models\EmailQueue;
 use App\Services\EmailToTicketService;
+use App\Services\ImapService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -18,12 +19,14 @@ class ProcessEmailsSingleCommand extends Command
     protected $description = 'Single command to fetch and process emails to prevent race conditions';
 
     protected $emailToTicketService;
+    protected $imapService;
     private $lockFile = '/tmp/aidly_email_processing.lock';
 
-    public function __construct(EmailToTicketService $emailToTicketService)
+    public function __construct(EmailToTicketService $emailToTicketService, ImapService $imapService)
     {
         parent::__construct();
         $this->emailToTicketService = $emailToTicketService;
+        $this->imapService = $imapService;
     }
 
     public function handle()
@@ -119,100 +122,28 @@ class ProcessEmailsSingleCommand extends Command
             'duplicates' => 0
         ];
 
-        // Use native PHP IMAP for Gmail compatibility
-        $mailbox = "{{$account->imap_host}:{$account->imap_port}/imap/ssl}INBOX";
-        $imap = @imap_open($mailbox, $account->imap_username, $account->imap_password);
-
-        if (!$imap) {
-            throw new \Exception('IMAP connection failed: ' . imap_last_error());
-        }
-
         try {
-            // Search for UNSEEN emails first, then check recent emails that might have been marked as seen
-            $emails = imap_search($imap, 'UNSEEN');
-
-            // Also check emails from the last hour that we might have missed
-            $oneHourAgo = date('j-M-Y H:i', strtotime('-1 hour'));
-            $recentEmails = imap_search($imap, "SINCE \"{$oneHourAgo}\"");
-
-            if ($recentEmails) {
-                $emails = $emails ? array_unique(array_merge($emails, $recentEmails)) : $recentEmails;
-            }
-
-            if (!$emails) {
-                $this->info("  → No new emails");
+            if ($dryRun) {
+                $this->info("  → Would fetch emails from account");
                 return $stats;
             }
 
-            $this->info("  → Found " . count($emails) . " unread emails");
+            // Use ImapService which has proper multipart/MIME handling
+            $result = $this->imapService->fetchEmailsFromAccount($account);
 
-            foreach (array_slice($emails, 0, $limit) as $emailNumber) {
-                try {
-                    $header = imap_headerinfo($imap, $emailNumber);
-                    $messageId = $header->message_id ?? uniqid('email_');
+            $stats['fetched'] = $result['count'];
+            $stats['duplicates'] = $result['total_messages'] - $result['count'];
+            $stats['errors'] = count($result['errors'] ?? []);
 
-                    // Check for duplicates
-                    if (EmailQueue::where('message_id', $messageId)->exists()) {
-                        $stats['duplicates']++;
-                        continue;
-                    }
-
-                    if ($dryRun) {
-                        $this->info("  → Would queue: {$header->subject}");
-                        $stats['fetched']++;
-                        continue;
-                    }
-
-                    // Get email body
-                    $body = $this->getEmailBody($imap, $emailNumber);
-
-                    // Create queue entry with transaction to prevent duplicates
-                    DB::transaction(function () use ($account, $header, $body, $messageId, &$stats) {
-                        // Double-check for race condition
-                        if (EmailQueue::where('message_id', $messageId)->exists()) {
-                            $stats['duplicates']++;
-                            return;
-                        }
-
-                        $toAddresses = $this->extractAddresses($header->to ?? []);
-                        $ccAddresses = $this->extractAddresses($header->cc ?? []);
-
-                        EmailQueue::create([
-                            'email_account_id' => $account->id,
-                            'message_id' => $messageId,
-                            'from_address' => $header->from[0]->mailbox . '@' . $header->from[0]->host,
-                            'from_name' => $header->from[0]->personal ?? '',
-                            'to_addresses' => DB::raw("ARRAY['" . implode("','", $toAddresses) . "']::text[]"),
-                            'cc_addresses' => DB::raw("ARRAY['" . implode("','", $ccAddresses) . "']::text[]"),
-                            'subject' => imap_utf8($header->subject ?? '(no subject)'),
-                            'body_plain' => $body['plain'],
-                            'body_html' => $body['html'],
-                            'content' => $body['plain'] ?: strip_tags($body['html']),
-                            'received_at' => date('Y-m-d H:i:s', $header->udate),
-                            'is_processed' => false,
-                            'mailbox_type' => $account->account_type,
-                            'original_recipient' => $account->email_address,
-                        ]);
-
-                        $stats['fetched']++;
-                    });
-
-                    // Mark as read
-                    imap_setflag_full($imap, $emailNumber, "\\Seen");
-
-                    $this->info("  → Queued: " . imap_utf8($header->subject ?? ''));
-
-                } catch (\Exception $e) {
-                    $stats['errors']++;
-                    Log::error('Failed to process email', [
-                        'error' => $e->getMessage(),
-                        'account' => $account->email_address
-                    ]);
-                }
+            if ($result['count'] > 0) {
+                $this->info("  → Queued {$result['count']} email(s)");
+            } else {
+                $this->info("  → No new emails");
             }
 
-        } finally {
-            imap_close($imap);
+        } catch (\Exception $e) {
+            $stats['errors']++;
+            throw $e;
         }
 
         return $stats;
@@ -253,57 +184,6 @@ class ProcessEmailsSingleCommand extends Command
         }
 
         return $stats;
-    }
-
-    private function getEmailBody($imap, $emailNumber): array
-    {
-        $structure = imap_fetchstructure($imap, $emailNumber);
-        $body = ['plain' => '', 'html' => ''];
-
-        if (!$structure->parts) {
-            // Simple message
-            $content = imap_fetchbody($imap, $emailNumber, 1);
-            $body['plain'] = $this->decodeContent($content, $structure->encoding);
-        } else {
-            // Multipart message
-            foreach ($structure->parts as $partNum => $part) {
-                $partNumber = $partNum + 1;
-
-                if ($part->type == 0) { // Text
-                    $content = imap_fetchbody($imap, $emailNumber, $partNumber);
-                    $decoded = $this->decodeContent($content, $part->encoding);
-
-                    if (strtoupper($part->subtype) == 'PLAIN') {
-                        $body['plain'] = $decoded;
-                    } elseif (strtoupper($part->subtype) == 'HTML') {
-                        $body['html'] = $decoded;
-                    }
-                }
-            }
-        }
-
-        return $body;
-    }
-
-    private function decodeContent($content, $encoding): string
-    {
-        switch ($encoding) {
-            case 3: // BASE64
-                return base64_decode($content);
-            case 4: // QUOTED-PRINTABLE
-                return quoted_printable_decode($content);
-            default:
-                return $content;
-        }
-    }
-
-    private function extractAddresses($addresses): array
-    {
-        $result = [];
-        foreach ($addresses as $address) {
-            $result[] = $address->mailbox . '@' . $address->host;
-        }
-        return $result;
     }
 
     private function acquireLock(): bool

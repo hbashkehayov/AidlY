@@ -144,7 +144,7 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
       >
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <div className="text-2xl font-bold text-gray-900">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">
               {customer.total_tickets || 0}
             </div>
             <span className="text-sm text-muted-foreground">total</span>

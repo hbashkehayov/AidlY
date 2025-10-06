@@ -14,6 +14,7 @@ import {
   User,
   LogOut,
   Handshake,
+  Headphones,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -96,7 +97,7 @@ export function Sidebar() {
 
             <Link href={user?.role === 'agent' ? '/dashboard/agent' : '/dashboard'} className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-lg">A</span>
+                <Headphones className="h-5 w-5 text-primary-foreground" />
               </div>
               <span className="text-xl font-semibold hidden sm:block">AidlY</span>
             </Link>

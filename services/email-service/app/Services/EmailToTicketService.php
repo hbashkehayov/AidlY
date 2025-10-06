@@ -576,10 +576,9 @@ class EmailToTicketService
             ],
         ];
 
-        // Include attachments if present
-        if ($email->hasAttachments()) {
-            $commentData['attachments'] = $email->attachments;
-        }
+        // DON'T include attachments in comment request
+        // Email attachments will be uploaded separately via processEmailAttachments()
+        // This avoids format mismatch issues with the ticket service
 
         $response = Http::post("{$this->ticketServiceUrl}/api/v1/public/tickets/{$ticketId}/comments", $commentData);
 
@@ -594,7 +593,9 @@ class EmailToTicketService
 
         $comment = $commentResponse['data'];
 
-        // Process attachments if any
+        // Process email attachments via AttachmentController
+        // Email attachments need special handling - they're stored as base64 in the email queue
+        // and need to be uploaded as proper file attachments via the attachment API
         if ($email->hasAttachments()) {
             $this->processEmailAttachments($email, $ticketId, $comment['id']);
         }
@@ -604,6 +605,7 @@ class EmailToTicketService
             'ticket_id' => $ticketId,
             'comment_id' => $comment['id'],
             'from_email' => $email->from_address,
+            'attachment_count' => $email->hasAttachments() ? count($email->attachments) : 0,
         ]);
 
         return $comment;

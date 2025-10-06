@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -14,9 +15,9 @@ import {
   Ticket,
   CheckCircle,
   Clock,
-  MoreVertical,
-  Mail,
   Calendar,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,21 +33,23 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { cn } from '@/lib/utils';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 
 const roleConfig = {
   admin: { label: 'Administrator', color: 'destructive', icon: Shield },
@@ -58,12 +61,15 @@ export default function TeamPage() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Check if current user is admin
   const isAdmin = user?.role === 'admin';
 
   // Fetch all users
-  const { data: usersData, isLoading } = useQuery({
+  const { data: usersData, isLoading, refetch } = useQuery({
     queryKey: ['users', roleFilter],
     queryFn: async () => {
       const params: any = {};
@@ -75,14 +81,19 @@ export default function TeamPage() {
     },
   });
 
-  // Fetch tickets to calculate stats for each user (only for admins)
-  const { data: ticketsData } = useQuery({
-    queryKey: ['all-tickets-for-stats'],
+  // Extract users first (before hooks)
+  const users = usersData?.data || usersData || [];
+
+  // Fetch ticket stats for ALL users with a single API call (MUCH faster!)
+  const { data: userStatsData, isLoading: isStatsLoading } = useQuery({
+    queryKey: ['user-ticket-stats'],
     queryFn: async () => {
-      const response = await api.tickets.list({ limit: 1000 });
-      return response.data?.data || response.data || [];
+      if (!isAdmin) return {};
+      const response = await api.tickets.getUserTicketStats();
+      return response.data?.data || {};
     },
-    enabled: isAdmin, // Only fetch ticket data for admins
+    enabled: isAdmin && users.length > 0,
+    staleTime: 30000, // Cache for 30 seconds
   });
 
   const getRoleBadge = (role: string) => {
@@ -97,25 +108,13 @@ export default function TeamPage() {
   };
 
   const calculateUserStats = (userId: string) => {
-    if (!ticketsData) return { total: 0, open: 0, closed: 0 };
-
-    const userTickets = ticketsData.filter((ticket: any) => ticket.assigned_agent_id === userId);
-    const openTickets = userTickets.filter((t: any) =>
-      ['open', 'pending'].includes(t.status)
-    );
-    const closedTickets = userTickets.filter((t: any) =>
-      ['resolved', 'closed'].includes(t.status)
-    );
-
-    return {
-      total: userTickets.length,
-      open: openTickets.length,
-      closed: closedTickets.length,
-    };
+    if (!userStatsData || !userStatsData[userId]) {
+      return { total: 0, open: 0, closed: 0 };
+    }
+    return userStatsData[userId];
   };
 
   // Filter users based on search query
-  const users = usersData?.data || usersData || [];
   const filteredUsers = users.filter((user: any) => {
     const matchesSearch = !searchQuery ||
       user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -127,6 +126,35 @@ export default function TeamPage() {
     return name
       ? name.split(' ').map((n: string) => n[0]).join('').toUpperCase()
       : 'U';
+  };
+
+  const handleDeleteClick = (user: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!userToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      await api.users.delete(userToDelete.id);
+      toast.success('User deleted successfully');
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      refetch(); // Refresh the user list
+    } catch (error: any) {
+      console.error('Failed to delete user:', error);
+      toast.error(error.response?.data?.message || 'Failed to delete user');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleEditClick = (userId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    router.push(`/team/${userId}/edit`);
   };
 
   return (
@@ -323,37 +351,26 @@ export default function TeamPage() {
                       </TableCell>
                       {isAdmin && (
                         <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                              <Button variant="ghost" size="sm">
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                              <DropdownMenuItem onClick={() => router.push(`/team/${user.id}`)}>
-                                <UserIcon className="mr-2 h-4 w-4" />
-                                View Profile
-                              </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                <Mail className="mr-2 h-4 w-4" />
-                                Send Email
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem>
-                                Edit Member
-                              </DropdownMenuItem>
-                              {user.is_active ? (
-                                <DropdownMenuItem className="text-red-600">
-                                  Deactivate
-                                </DropdownMenuItem>
-                              ) : (
-                                <DropdownMenuItem>
-                                  Activate
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => handleEditClick(user.id, e)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                              <span className="sr-only">Edit member</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => handleDeleteClick(user, e)}
+                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete member</span>
+                            </Button>
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>
@@ -364,6 +381,28 @@ export default function TeamPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Team Member</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{userToDelete?.name}</strong>? This action cannot be undone and will permanently remove the user account and all associated data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

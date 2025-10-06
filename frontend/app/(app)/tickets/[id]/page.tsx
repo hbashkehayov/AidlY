@@ -22,9 +22,7 @@ import {
   Forward,
   Reply,
   Edit3,
-  MoreHorizontal,
   Building,
-  Star,
   CheckCircle,
   ChevronDown,
   ChevronUp,
@@ -53,13 +51,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Textarea } from '@/components/ui/textarea';
 import { RichTextEditor } from '@/components/editor/rich-text-editor';
@@ -237,9 +228,7 @@ export default function TicketPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editedTicket, setEditedTicket] = useState<any>(null);
-  const [isFavorited, setIsFavorited] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Record<string, boolean>>({});
-  const [showEmailDetails, setShowEmailDetails] = useState<Record<string, boolean>>({});
   const [showExternalImages, setShowExternalImages] = useState<Record<string, boolean>>({});
   const [dismissedForwardMessages, setDismissedForwardMessages] = useState<string[]>([]);
   const [isClosingReply, setIsClosingReply] = useState(false);
@@ -274,9 +263,6 @@ export default function TicketPage() {
         status: ticket.status || 'open',
         category_id: ticket.category_id || '',
       });
-      // Check if favorited (stored in localStorage for demo)
-      const favorites = JSON.parse(localStorage.getItem('favorited_tickets') || '[]');
-      setIsFavorited(favorites.includes(ticketId));
     }
   }, [ticket, ticketId, editedTicket]);
 
@@ -484,21 +470,6 @@ export default function TicketPage() {
     editTicketMutation.mutate(editedTicket);
   };
 
-  const toggleFavorite = () => {
-    const favorites = JSON.parse(localStorage.getItem('favorited_tickets') || '[]');
-    if (isFavorited) {
-      const newFavorites = favorites.filter((id: string) => id !== ticketId);
-      localStorage.setItem('favorited_tickets', JSON.stringify(newFavorites));
-      setIsFavorited(false);
-      toast.success('Removed from favorites');
-    } else {
-      favorites.push(ticketId);
-      localStorage.setItem('favorited_tickets', JSON.stringify(favorites));
-      setIsFavorited(true);
-      toast.success('Added to favorites');
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -609,32 +580,6 @@ export default function TicketPage() {
                   <Forward className="h-4 w-4 mr-1" />
                   Forward
                 </Button>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={toggleFavorite}>
-                      <Star className={cn("h-4 w-4 mr-2", isFavorited && "fill-yellow-500 text-yellow-500")} />
-                      {isFavorited ? 'Remove from favorites' : 'Add to favorites'}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsEditDialogOpen(true)}>
-                      <Edit3 className="h-4 w-4 mr-2" />
-                      Edit ticket
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-red-600"
-                      onClick={() => setIsDeleteDialogOpen(true)}
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
             </div>
           </div>

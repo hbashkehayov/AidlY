@@ -26,8 +26,8 @@ class OptionalJwtMiddleware
 
             if ($userData) {
                 // Set user data in request for authenticated requests
-                $request->merge(['user' => $userData]);
                 $request->attributes->set('auth_user', $userData);
+                // Note: Don't merge to request inputs to avoid conflicts with JSON body
             }
 
             // Proceed regardless of token validity (it's optional)
