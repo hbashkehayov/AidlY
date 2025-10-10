@@ -124,12 +124,13 @@ export function RichTextEditor({
     editorProps: {
       attributes: {
         class: cn(
-          'tiptap prose prose-sm dark:prose-invert max-w-none p-4 focus:outline-none',
+          'tiptap prose prose-sm dark:prose-invert max-w-none p-3 sm:p-4 focus:outline-none',
           'transition-all duration-300 ease-in-out',
           !isExpanded && 'overflow-y-auto',
+          isExpanded && 'min-h-[300px] sm:min-h-[400px]',
           className
         ),
-        style: !isExpanded ? `min-height: ${minHeight}; max-height: ${maxHeight};` : undefined,
+        style: !isExpanded ? `min-height: ${minHeight}; max-height: ${maxHeight};` : `min-height: 300px;`,
       },
     },
     immediatelyRender: false, // Prevent SSR hydration issues
@@ -313,11 +314,11 @@ export function RichTextEditor({
 
       <div className={cn(
         'border rounded-lg transition-all duration-300 ease-in-out',
-        isExpanded && 'fixed inset-4 md:inset-8 lg:inset-16 z-50 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col'
+        isExpanded && 'fixed inset-2 sm:inset-4 md:inset-8 lg:inset-16 xl:inset-20 z-50 bg-background shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-screen'
       )}>
         {/* Toolbar */}
-      <div className="border-b p-2 flex items-start justify-between gap-2 bg-muted/50 shrink-0">
-        <div className="flex items-center gap-x-1 gap-y-2 flex-wrap">
+      <div className="border-b p-2 flex items-start justify-between gap-2 bg-muted/50 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-x-1 gap-y-2 flex-wrap min-w-0">
           <Toggle
             size="sm"
             pressed={editor.isActive('bold')}
@@ -462,12 +463,12 @@ export function RichTextEditor({
 
         {/* Editor */}
         <div className={cn(
-          "flex-1 overflow-y-auto",
-          isExpanded && "flex items-start justify-center p-4"
+          "flex-1 overflow-y-auto min-h-0",
+          isExpanded && "flex items-start justify-center p-2 sm:p-4"
         )}>
           <div className={cn(
             "w-full",
-            isExpanded && "max-w-4xl"
+            isExpanded && "max-w-4xl mx-auto"
           )}>
             <EditorContent editor={editor} />
 

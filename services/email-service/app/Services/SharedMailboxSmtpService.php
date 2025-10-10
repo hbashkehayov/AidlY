@@ -287,28 +287,23 @@ class SharedMailboxSmtpService
             $content = nl2br(htmlspecialchars($content));
         }
 
-        $ticketId = $replyData['ticket_id'] ?? '';
-        $ticketNumber = $replyData['ticket_number'] ?? $ticketId;
+        $html = "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Reply</title>\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0;\">\n";
 
-        $html = "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"UTF-8\">\n    <title>Re: Ticket #{$ticketNumber}</title>\n</head>\n<body style=\"font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;\">\n";
+        // Container
+        $html .= "    <div style=\"max-width: 600px; margin: 20px auto; background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);\">\n";
 
         // Add reply content
-        $html .= "    <div style=\"margin-bottom: 20px;\">\n";
-        $html .= "        {$content}\n";
-        $html .= "    </div>\n";
+        $html .= "        <div style=\"margin: 20px 0;\">\n";
+        $html .= "            {$content}\n";
+        $html .= "        </div>\n";
 
         // Add signature
-        $html .= "    <div style=\"border-top: 1px solid #ccc; padding-top: 10px; margin-top: 20px; color: #666;\">\n";
-        $html .= "        " . nl2br(htmlspecialchars($signature)) . "\n";
-        $html .= "    </div>\n";
+        $html .= "        <div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #555;\">\n";
+        $html .= "            <p style=\"margin: 0;\">" . nl2br(htmlspecialchars($signature)) . "</p>\n";
+        $html .= "        </div>\n";
 
-        // Add ticket reference
-        if (!empty($ticketNumber)) {
-            $html .= "    <div style=\"margin-top: 20px; font-size: 11px; color: #999; border-top: 1px solid #eee; padding-top: 10px;\">\n";
-            $html .= "        <p>Ticket Reference: #{$ticketNumber}</p>\n";
-            $html .= "        <p>Please keep this reference number for your records.</p>\n";
-            $html .= "    </div>\n";
-        }
+        // Close container
+        $html .= "    </div>\n";
 
         $html .= "</body>\n</html>";
 
@@ -323,17 +318,8 @@ class SharedMailboxSmtpService
         // Strip HTML if present
         $content = strip_tags($content);
 
-        $ticketNumber = $replyData['ticket_number'] ?? $replyData['ticket_id'] ?? '';
-
         $plain = $content . "\n\n";
-        $plain .= str_repeat('-', 50) . "\n";
-        $plain .= $signature . "\n";
-
-        if (!empty($ticketNumber)) {
-            $plain .= "\n" . str_repeat('-', 50) . "\n";
-            $plain .= "Ticket Reference: #{$ticketNumber}\n";
-            $plain .= "Please keep this reference number for your records.\n";
-        }
+        $plain .= $signature;
 
         return $plain;
     }

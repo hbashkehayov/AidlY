@@ -180,7 +180,6 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
     {
         $this->last_login_at = Carbon::now();
         $this->last_login_ip = $ip;
-        $this->login_attempts = 0;
         $this->save();
     }
 

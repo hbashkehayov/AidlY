@@ -55,7 +55,10 @@ class WebhookController extends Controller
                 ]
             ]);
 
-            // Notify agents/supervisors if ticket is high priority
+            // Notify ALL agents/staff of new ticket creation (shows in bell dropdown)
+            $this->notifyAgentsOfNewTicket($ticketData);
+
+            // Send additional high priority alert if needed
             if ($ticketData['priority'] === 'high' || $ticketData['priority'] === 'urgent') {
                 $this->notifyAgentsOfHighPriorityTicket($ticketData);
             }
@@ -165,28 +168,53 @@ class WebhookController extends Controller
 
             $ticketData = $request->all();
 
-            // Notify the assigned agent
-            $this->queueNotification([
-                'user_id' => $ticketData['assigned_to_id'],
-                'recipient_email' => $ticketData['assigned_to_email'],
-                'type' => 'in_app',
-                'event' => 'ticket_assigned',
-                'template' => 'ticket_assigned',
-                'subject' => "Ticket {$ticketData['ticket_number']} assigned to you",
-                'message' => "Ticket #{$ticketData['ticket_number']}: {$ticketData['subject']} has been assigned to you by {$ticketData['assigned_by']}",
-                'priority' => $ticketData['priority'],
-                'data' => [
+            // Get the assigner's name and UUID from database (similar to how new ticket notification works)
+            $assignedByName = 'System';
+            $assignedByUuid = null;
+
+            if (!empty($ticketData['assigned_by'])) {
+                // Check if assigned_by is a UUID (need to fetch name) or already a name
+                if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $ticketData['assigned_by'])) {
+                    // It's a UUID, fetch the name from users table
+                    $assignedByUuid = $ticketData['assigned_by'];
+                    $assigner = DB::table('users')
+                        ->where('id', $ticketData['assigned_by'])
+                        ->first();
+                    $assignedByName = $assigner ? $assigner->name : 'System';
+                } else {
+                    // It's already a name, can't use it as UUID
+                    $assignedByName = $ticketData['assigned_by'];
+                    $assignedByUuid = null;
+                }
+            }
+
+            // Create notification directly in the notifications table (like new ticket notification)
+            DB::table('notifications')->insert([
+                'id' => \Illuminate\Support\Str::uuid(),
+                'notifiable_type' => 'user',
+                'notifiable_id' => $ticketData['assigned_to_id'],
+                'type' => 'ticket_assigned',
+                'channel' => 'in_app',
+                'ticket_id' => $ticketData['ticket_id'],
+                'triggered_by' => $assignedByUuid, // Must be a valid UUID or null
+                'title' => "New ticket assigned to you by {$assignedByName}",
+                'message' => $ticketData['subject'],
+                'data' => json_encode([
                     'ticket_id' => $ticketData['ticket_id'],
-                    'agent_name' => $ticketData['assigned_to_name'],
                     'ticket_number' => $ticketData['ticket_number'],
                     'ticket_subject' => $ticketData['subject'],
-                    'subject' => $ticketData['subject'], // Add this for template compatibility
                     'customer_name' => $ticketData['customer_name'],
-                    'ticket_priority' => $ticketData['priority'],
-                    'assigned_by' => $ticketData['assigned_by'] ?? 'System',
+                    'priority' => $ticketData['priority'],
+                    'assigned_by' => $assignedByName,
                     'action_url' => "/tickets/{$ticketData['ticket_id']}",
                     'action_text' => 'View Ticket'
-                ]
+                ]),
+                'action_url' => "/tickets/{$ticketData['ticket_id']}",
+                'action_text' => 'View Ticket',
+                'priority' => $this->mapPriority($ticketData['priority'] ?? 'normal'),
+                'status' => 'pending',
+                'created_at' => \Carbon\Carbon::now(),
+                'updated_at' => \Carbon\Carbon::now()
             ]);
 
             return response()->json([
@@ -258,7 +286,7 @@ class WebhookController extends Controller
                     'type' => 'in_app',
                     'event' => 'comment_added',
                     'template' => 'comment_added_agent',
-                    'subject' => "New customer reply",
+                    'subject' => $commentData['ticket_subject'], // Show ticket subject instead of generic "New customer reply"
                     'priority' => 'normal',
                     'data' => [
                         'ticket_id' => $commentData['ticket_id'],
@@ -421,10 +449,74 @@ class WebhookController extends Controller
      */
     private function processTemplate($template, $data)
     {
-        foreach ($data as $key => $value) {
-            $template = str_replace("{{" . $key . "}}", $value, $template);
+        if (!$template) {
+            return '';
         }
-        return $template;
+
+        // Replace template variables
+        foreach ($data as $key => $value) {
+            // Handle both {{key}} and {key} formats
+            $template = str_replace("{{" . $key . "}}", $value, $template);
+            $template = str_replace("{" . $key . "}", $value, $template);
+
+            // Also handle capitalized versions
+            $capitalizedKey = ucfirst($key);
+            $template = str_replace("{{" . $capitalizedKey . "}}", $value, $template);
+            $template = str_replace("{" . $capitalizedKey . "}", $value, $template);
+        }
+
+        // Remove any remaining unprocessed variables
+        $template = preg_replace('/\{\{?[^}]+\}\}?/', '', $template);
+
+        // Strip HTML tags for in-app notifications (keep for email)
+        $template = strip_tags($template);
+
+        // Clean up extra whitespace
+        $template = preg_replace('/\s+/', ' ', $template);
+        $template = trim($template);
+
+        return $template ?: 'Notification';
+    }
+
+    /**
+     * Notify all agents of new ticket creation (appears in bell dropdown)
+     */
+    private function notifyAgentsOfNewTicket($ticketData)
+    {
+        // Get all agents, supervisors, and admins
+        $agents = DB::table('users')
+            ->whereIn('role', ['agent', 'supervisor', 'admin'])
+            ->where('is_active', true)
+            ->get();
+
+        // Create an in-app notification for each agent
+        foreach ($agents as $agent) {
+            DB::table('notifications')->insert([
+                'id' => \Illuminate\Support\Str::uuid(),
+                'notifiable_type' => 'user',
+                'notifiable_id' => $agent->id,
+                'type' => 'ticket_created',
+                'channel' => 'in_app',
+                'ticket_id' => $ticketData['ticket_id'],
+                'title' => 'A new ticket is waiting to be resolved',
+                'message' => $ticketData['subject'],
+                'data' => json_encode([
+                    'ticket_id' => $ticketData['ticket_id'],
+                    'ticket_number' => $ticketData['ticket_number'],
+                    'ticket_subject' => $ticketData['subject'],
+                    'customer_name' => $ticketData['customer_name'],
+                    'priority' => $ticketData['priority'],
+                    'action_url' => "/tickets/{$ticketData['ticket_id']}",
+                    'action_text' => 'View Ticket'
+                ]),
+                'action_url' => "/tickets/{$ticketData['ticket_id']}",
+                'action_text' => 'View Ticket',
+                'priority' => $this->mapPriority($ticketData['priority'] ?? 'normal'),
+                'status' => 'pending',
+                'created_at' => \Carbon\Carbon::now(),
+                'updated_at' => \Carbon\Carbon::now()
+            ]);
+        }
     }
 
     /**

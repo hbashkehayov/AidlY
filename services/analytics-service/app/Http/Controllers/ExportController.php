@@ -79,7 +79,8 @@ class ExportController extends Controller
         $authService = env('AUTH_SERVICE_URL', 'http://localhost:8001');
 
         // Build query for tickets
-        $ticketsQuery = DB::connection('pgsql')->table('tickets');
+        $ticketsQuery = DB::connection('pgsql')->table('tickets')
+            ->where('is_archived', false);
 
         if ($dateFrom) {
             $ticketsQuery->where('created_at', '>=', $dateFrom);

@@ -165,10 +165,21 @@ class CommentController extends Controller
         $this->validate($request, [
             'ticket_id' => 'required|string|uuid',
             'content' => 'required|string|max:5000',
+            'body_html' => 'nullable|string', // HTML version with embedded inline images
+            'body_plain' => 'nullable|string', // Plain text version
             'is_internal_note' => 'boolean',
             'is_ai_generated' => 'boolean',
             'ai_suggestion_used' => 'nullable|string',
+            'visible_to_agents' => 'nullable|array',
+            'visible_to_agents.*' => 'string',
             'attachments.*' => 'nullable|file|max:10240', // Max 10MB per file
+            // Email metadata for Gmail-style rendering
+            'from_address' => 'nullable|string',
+            'to_addresses' => 'nullable|array',
+            'cc_addresses' => 'nullable|array',
+            'subject' => 'nullable|string',
+            'headers' => 'nullable|array',
+            'metadata' => 'nullable|array',
         ]);
 
         // Verify ticket exists
@@ -182,6 +193,18 @@ class CommentController extends Controller
             ], 404);
         }
 
+        // Check if ticket is closed or cancelled - reject non-internal comments
+        // Allow resolved tickets to receive replies (they will auto-reopen)
+        if (in_array($ticket->status, [Ticket::STATUS_CLOSED, Ticket::STATUS_CANCELLED]) && !$request->get('is_internal_note', false)) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'message' => 'This ticket is closed and cannot accept new replies',
+                    'ticket_status' => $ticket->status
+                ]
+            ], 403);
+        }
+
         try {
             DB::beginTransaction();
 
@@ -190,9 +213,18 @@ class CommentController extends Controller
                 'user_id' => $request->user()->id ?? null, // Will be null for client comments
                 'client_id' => $request->get('client_id'), // For client comments
                 'content' => $request->content,
+                'body_html' => $request->get('body_html'), // HTML version with embedded inline images
+                'body_plain' => $request->get('body_plain'), // Plain text version
                 'is_internal_note' => $request->get('is_internal_note', false),
                 'is_ai_generated' => $request->get('is_ai_generated', false),
                 'ai_suggestion_used' => $request->get('ai_suggestion_used'),
+                'visible_to_agents' => $request->get('visible_to_agents'),
+                // Email metadata for Gmail-style rendering
+                'from_address' => $request->get('from_address'),
+                'to_addresses' => $request->get('to_addresses'),
+                'cc_addresses' => $request->get('cc_addresses'),
+                'subject' => $request->get('subject'),
+                'headers' => $request->get('headers'),
             ]);
 
             // Handle file attachments if provided
@@ -362,32 +394,54 @@ class CommentController extends Controller
             ], 404);
         }
 
-        // Don't mark as read if already read
-        if ($comment->is_read) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Comment already marked as read'
-            ]);
-        }
-
         try {
-            // Get user from request if available, otherwise use a default
+            // Get user from request
             $userId = null;
             if ($request->attributes->has('auth_user')) {
                 $authUser = $request->attributes->get('auth_user');
                 $userId = $authUser['id'] ?? null;
             }
 
-            $comment->update([
-                'is_read' => true,
-                'read_at' => \Carbon\Carbon::now(),
-                'read_by' => $userId
+            if (!$userId) {
+                return response()->json([
+                    'success' => false,
+                    'error' => [
+                        'message' => 'User not authenticated'
+                    ]
+                ], 401);
+            }
+
+            // Don't mark user's own comments as read (they created it)
+            if ($comment->user_id === $userId) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Cannot mark your own comment as read'
+                ]);
+            }
+
+            // Check if already marked as read
+            $alreadyRead = DB::table('comment_reads')
+                ->where('comment_id', $id)
+                ->where('user_id', $userId)
+                ->exists();
+
+            if ($alreadyRead) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Comment already marked as read'
+                ]);
+            }
+
+            // Insert read record
+            DB::table('comment_reads')->insert([
+                'comment_id' => $id,
+                'user_id' => $userId,
+                'read_at' => DB::raw('NOW()')
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Comment marked as read',
-                'data' => $comment
+                'message' => 'Comment marked as read'
             ]);
 
         } catch (\Exception $e) {

@@ -72,7 +72,7 @@ function TicketRow({ ticket }: any) {
             </div>
             <p className="text-sm text-muted-foreground">{ticket.subject}</p>
             <p className="text-xs text-muted-foreground">
-              Client {ticket.client_id?.slice(-8) || 'Unknown'} • {ticket.assigned_agent_id ? `Agent ${ticket.assigned_agent_id.slice(-8)}` : 'Unassigned'}
+              {ticket.client?.name || 'Unknown Client'} • {ticket.assigned_agent?.name || 'Unassigned'}
             </p>
           </div>
         </div>

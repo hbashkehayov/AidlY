@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
+import { useRealtimeUpdates } from '@/lib/use-realtime-updates';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,14 +63,18 @@ import {
   Clock,
   User,
   Tag,
-  AlertCircle,
   CheckCircle,
   XCircle,
   MessageSquare,
-  Calendar,
   ChevronLeft,
   ChevronRight,
-  Trash2,
+  Inbox,
+  ClipboardList,
+  Lock,
+  Archive,
+  Filter,
+  ArrowUpDown,
+  List,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { format } from 'date-fns';
@@ -81,7 +87,6 @@ const statusConfig = {
   resolved: { label: 'Resolved', icon: CheckCircle },
   closed: { label: 'Closed', icon: XCircle },
   cancelled: { label: 'Cancelled', icon: XCircle },
-  new: { label: 'New', icon: AlertCircle },
 };
 
 // Real tickets data now comes from the API
@@ -89,55 +94,133 @@ const statusConfig = {
 export default function TicketsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  // Get current user to check role
+  const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
+  const isAdmin = user?.role === 'admin';
+
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'all' : 'my-tickets');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [sortBy, setSortBy] = useState('default');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedTickets, setSelectedTickets] = useState<string[]>([]);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [ticketToDelete, setTicketToDelete] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false);
+  const [ticketToArchive, setTicketToArchive] = useState<string | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
-
-  // Get current user to check role
-  const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('user') || '{}') : {};
-  const isAgent = user?.role === 'agent';
-  const isAdmin = user?.role === 'admin';
+  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
+  const [ticketToRestore, setTicketToRestore] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const showBulkActions = selectedTickets.length > 0 || isExiting;
 
+  // Real-time updates hook
+  const { checkForNewTickets, hasPermission } = useRealtimeUpdates({
+    enableBrowserNotifications: true,
+    enableSound: true,
+    onNewTicket: (ticket) => {
+      console.log('New ticket received:', ticket);
+    },
+  });
+
   const { data: tickets, isLoading } = useQuery({
-    queryKey: ['tickets', selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage, isAgent ? user?.id : null],
+    queryKey: ['tickets', activeTab, selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage, sortBy],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedStatus !== 'all') params.append('status', selectedStatus);
+
+      // Apply tab-based filtering
+      // Backend now handles visibility: non-admins see only their tickets + unassigned
+      if (activeTab === 'my-tickets') {
+        // Show only tickets assigned to current user
+        params.append('assigned_agent_id', user?.id || '');
+        // Apply status filter if selected
+        if (selectedStatus !== 'all') {
+          params.append('status', selectedStatus);
+        } else {
+          // Exclude closed tickets when showing all statuses
+          params.append('exclude_status', 'closed');
+        }
+      } else if (activeTab === 'available') {
+        // Show only unassigned tickets
+        params.append('unassigned', 'true');
+        // Apply status filter if selected
+        if (selectedStatus !== 'all') {
+          params.append('status', selectedStatus);
+        } else {
+          // Exclude closed tickets when showing all statuses
+          params.append('exclude_status', 'closed');
+        }
+      } else if (activeTab === 'closed') {
+        params.append('status', 'closed');
+      } else if (activeTab === 'archived') {
+        params.append('archived', 'true');
+      } else if (activeTab === 'all') {
+        // 'all' tab shows both assigned to me + unassigned (handled by backend)
+        // Apply status filter if selected
+        if (selectedStatus !== 'all') {
+          params.append('status', selectedStatus);
+        } else {
+          // Exclude closed tickets when showing all statuses
+          params.append('exclude_status', 'closed');
+        }
+      }
       if (selectedPriority !== 'all') params.append('priority', selectedPriority);
       if (searchQuery) params.append('search', searchQuery);
       params.append('page', currentPage.toString());
       params.append('per_page', itemsPerPage.toString());
 
-      // If user is an agent, only show tickets assigned to them
-      if (isAgent && user?.id) {
-        params.append('assigned_agent_id', user.id);
+      // Apply sorting
+      if (sortBy === 'default') {
+        // Default: unread priority + most recent
+        params.append('sort', 'default');
+      } else if (sortBy === 'recent') {
+        params.append('sort', 'updated_at');
+        params.append('direction', 'desc');
+      } else if (sortBy === 'oldest') {
+        params.append('sort', 'created_at');
+        params.append('direction', 'asc');
+      } else if (sortBy === 'priority') {
+        params.append('sort', 'priority');
+        params.append('direction', 'desc');
+      } else if (sortBy === 'status') {
+        params.append('sort', 'status');
+        params.append('direction', 'asc');
       }
 
       const response = await api.tickets.list(Object.fromEntries(params));
       // The API returns { success: true, data: ticketsArray, meta: pagination }
       // We need to return the whole response to access both data and meta
-      if (response.data?.success) {
-        return response.data; // Return { success, data, meta }
-      }
-      // Fallback for different response structure
-      return response.data;
+      return response.data?.success ? response.data : response.data;
     },
+    // Real-time updates - more aggressive polling
+    refetchInterval: 3000, // Poll every 3 seconds for near real-time updates
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+    refetchIntervalInBackground: true, // Continue polling in background for notifications
+    refetchOnMount: true, // Always refetch on mount
+    refetchOnReconnect: true, // Refetch when connection is restored
   });
+
+  // Check for new tickets when data updates
+  useEffect(() => {
+    if (tickets) {
+      checkForNewTickets();
+    }
+  }, [tickets, checkForNewTickets]);
 
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedStatus, selectedPriority, searchQuery, itemsPerPage]);
+  }, [activeTab, selectedStatus, selectedPriority, searchQuery, itemsPerPage, sortBy]);
+
+  // Reset status filter when switching to tabs that don't support it
+  useEffect(() => {
+    if (activeTab === 'closed' || activeTab === 'archived') {
+      setSelectedStatus('all');
+    }
+  }, [activeTab]);
 
   const getStatusBadge = (status: string) => {
     const config = statusConfig[status as keyof typeof statusConfig];
@@ -184,36 +267,73 @@ export default function TicketsPage() {
     }, 300);
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkArchive = async () => {
     if (selectedTickets.length === 0) return;
 
-    setIsDeleting(true);
+    setIsArchiving(true);
     try {
-      await Promise.all(selectedTickets.map(id => api.tickets.delete(id)));
+      // Update tickets to mark them as archived
+      await Promise.all(selectedTickets.map(id => api.tickets.update(id, { is_archived: true })));
       handleClearSelection();
       // Invalidate and refetch tickets without full page reload
       await queryClient.invalidateQueries({ queryKey: ['tickets'] });
     } catch (error) {
-      console.error('Failed to delete tickets:', error);
-      alert('Failed to delete some tickets. Please try again.');
+      console.error('Failed to archive tickets:', error);
+      alert('Failed to archive some tickets. Please try again.');
     } finally {
-      setIsDeleting(false);
+      setIsArchiving(false);
     }
   };
 
-  const handleDeleteTicket = async (ticketId: string) => {
-    setIsDeleting(true);
+  const handleArchiveTicket = async (ticketId: string) => {
+    setIsArchiving(true);
     try {
-      await api.tickets.delete(ticketId);
-      setIsDeleteDialogOpen(false);
-      setTicketToDelete(null);
+      // Soft delete by marking as archived
+      await api.tickets.update(ticketId, { is_archived: true });
+      setIsArchiveDialogOpen(false);
+      setTicketToArchive(null);
       // Invalidate and refetch tickets without full page reload
       await queryClient.invalidateQueries({ queryKey: ['tickets'] });
     } catch (error) {
-      console.error('Failed to delete ticket:', error);
-      alert('Failed to delete ticket. Please try again.');
+      console.error('Failed to archive ticket:', error);
+      alert('Failed to archive ticket. Please try again.');
     } finally {
-      setIsDeleting(false);
+      setIsArchiving(false);
+    }
+  };
+
+  const handleBulkRestore = async () => {
+    if (selectedTickets.length === 0) return;
+
+    setIsRestoring(true);
+    try {
+      // Update tickets to restore them from archive
+      await Promise.all(selectedTickets.map(id => api.tickets.update(id, { is_archived: false })));
+      handleClearSelection();
+      // Invalidate and refetch tickets without full page reload
+      await queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    } catch (error) {
+      console.error('Failed to restore tickets:', error);
+      alert('Failed to restore some tickets. Please try again.');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handleRestoreTicket = async (ticketId: string) => {
+    setIsRestoring(true);
+    try {
+      // Restore by marking as not archived
+      await api.tickets.update(ticketId, { is_archived: false });
+      setIsRestoreDialogOpen(false);
+      setTicketToRestore(null);
+      // Invalidate and refetch tickets without full page reload
+      await queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    } catch (error) {
+      console.error('Failed to restore ticket:', error);
+      alert('Failed to restore ticket. Please try again.');
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -221,11 +341,14 @@ export default function TicketsPage() {
     <div className="flex-1 space-y-4 p-8 pt-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Tickets</h2>
-          <p className="text-muted-foreground">
-            Manage and respond to customer support tickets
-          </p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight">Tickets</h2>
+            <p className="text-muted-foreground">
+              Manage and respond to customer support tickets
+              {hasPermission && <span className="ml-2 text-xs">(Browser notifications enabled)</span>}
+            </p>
+          </div>
         </div>
         {/* New Ticket button removed */}
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -296,6 +419,36 @@ export default function TicketsPage() {
         </Dialog>
       </div>
 
+      {/* Tabs for filtering */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className={`grid w-full ${isAdmin ? 'grid-cols-5' : 'grid-cols-3'} lg:w-auto lg:inline-grid`}>
+          {isAdmin && (
+            <TabsTrigger value="all" className="gap-2">
+              <Inbox className="h-4 w-4" />
+              <span>All Tickets</span>
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="my-tickets" className="gap-2">
+            <User className="h-4 w-4" />
+            <span>My Tickets</span>
+          </TabsTrigger>
+          <TabsTrigger value="available" className="gap-2">
+            <ClipboardList className="h-4 w-4" />
+            <span>Available</span>
+          </TabsTrigger>
+          <TabsTrigger value="closed" className="gap-2">
+            <Lock className="h-4 w-4" />
+            <span>Closed</span>
+          </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="archived" className="gap-2">
+              <Archive className="h-4 w-4" />
+              <span>Archived</span>
+            </TabsTrigger>
+          )}
+        </TabsList>
+      </Tabs>
+
       {/* Filters and Search */}
       <Card>
         <CardContent className="p-4">
@@ -309,21 +462,25 @@ export default function TicketsPage() {
                 className="pl-9"
               />
             </div>
-            <Select value={selectedStatus} onValueChange={setSelectedStatus}>
-              <SelectTrigger className="w-full sm:w-[180px]">
-                <SelectValue placeholder="All Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="new">New</SelectItem>
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-                <SelectItem value="closed">Closed</SelectItem>
-              </SelectContent>
-            </Select>
+            {/* Show status filter on tabs that support it */}
+            {(activeTab === 'all' || activeTab === 'my-tickets' || activeTab === 'available') && (
+              <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <Filter className="h-4 w-4 mr-2" />
+                  <SelectValue placeholder="All Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
             <Select value={selectedPriority} onValueChange={setSelectedPriority}>
               <SelectTrigger className="w-full sm:w-[180px]">
+                <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="All Priorities" />
               </SelectTrigger>
               <SelectContent>
@@ -334,8 +491,22 @@ export default function TicketsPage() {
                 <SelectItem value="urgent">Urgent</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <ArrowUpDown className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="Sort By" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default</SelectItem>
+                <SelectItem value="recent">Most Recent</SelectItem>
+                <SelectItem value="oldest">Oldest First</SelectItem>
+                <SelectItem value="priority">Priority</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(Number(value))}>
               <SelectTrigger className="w-full sm:w-[100px]">
+                <List className="h-4 w-4 mr-2" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -371,37 +542,73 @@ export default function TicketsPage() {
                   ? "animate-out fade-out slide-out-to-right-2"
                   : "animate-in fade-in slide-in-from-right-2"
               )}>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={isDeleting}
-                      className="bg-red-500/90 hover:bg-red-600 transition-all duration-200"
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Selected
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Tickets?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Are you sure you want to delete {selectedTickets.length} ticket{selectedTickets.length > 1 ? 's' : ''}?
-                        This action cannot be undone and will permanently delete all ticket data.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={handleBulkDelete}
-                        className="bg-red-500 hover:bg-red-600"
+                {activeTab === 'archived' ? (
+                  // Restore button for archived tickets
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isRestoring}
+                        className="border-green-300 text-green-700 hover:bg-green-50 transition-all duration-200"
                       >
-                        {isDeleting ? 'Deleting...' : 'Delete Tickets'}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Restore Selected
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Restore Tickets?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to restore {selectedTickets.length} ticket{selectedTickets.length > 1 ? 's' : ''}?
+                          Restored tickets will be moved back to active tickets.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={handleBulkRestore}
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          {isRestoring ? 'Restoring...' : 'Restore Tickets'}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                ) : (
+                  // Archive button for active tickets
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isArchiving}
+                        className="border-orange-300 text-orange-700 hover:bg-orange-50 transition-all duration-200"
+                      >
+                        <Archive className="h-4 w-4 mr-2" />
+                        Archive Selected
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Archive Tickets?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to archive {selectedTickets.length} ticket{selectedTickets.length > 1 ? 's' : ''}?
+                          Archived tickets can be viewed in the Archived tab.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={handleBulkArchive}
+                          className="bg-orange-600 hover:bg-orange-700"
+                        >
+                          {isArchiving ? 'Archiving...' : 'Archive Tickets'}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
 
                 <Button
                   variant="ghost"
@@ -456,19 +663,56 @@ export default function TicketsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                tickets?.data?.map((ticket: any) => (
-                  <TableRow
-                    key={ticket.id}
-                    className="cursor-pointer hover:bg-accent/50"
-                    onClick={(e) => {
-                      // Don't navigate if clicking checkbox or actions
-                      if ((e.target as HTMLElement).closest('[data-no-navigate]')) {
-                        e.stopPropagation();
-                        return;
-                      }
-                      router.push(`/tickets/${ticket.id}`);
-                    }}
-                  >
+                tickets?.data?.map((ticket: any) => {
+                  // Check if ticket is unassigned (no agent assigned)
+                  const isUnassigned = !ticket.assigned_agent_id;
+
+                  return (
+                    <TableRow
+                      key={ticket.id}
+                      className={cn(
+                        "transition-colors duration-200",
+                        activeTab === 'archived'
+                          ? "cursor-not-allowed opacity-60"
+                          : "cursor-pointer",
+                        isUnassigned
+                          ? "bg-purple-50/60 hover:bg-accent/50 dark:bg-purple-950/20 dark:hover:bg-accent/50"
+                          : activeTab !== 'archived' && "hover:bg-accent/50"
+                      )}
+                      onClick={(e) => {
+                        // Don't allow navigation for archived tickets
+                        if (activeTab === 'archived') {
+                          e.stopPropagation();
+                          return;
+                        }
+
+                        // Don't navigate if clicking checkbox or actions
+                        if ((e.target as HTMLElement).closest('[data-no-navigate]')) {
+                          e.stopPropagation();
+                          return;
+                        }
+
+                        // Optimistically update the cache to hide unread counters immediately
+                        queryClient.setQueryData(
+                          ['tickets', activeTab, selectedStatus, selectedPriority, searchQuery, currentPage, itemsPerPage],
+                          (oldData: any) => {
+                            if (!oldData?.data) return oldData;
+
+                            return {
+                              ...oldData,
+                              data: oldData.data.map((t: any) =>
+                                t.id === ticket.id
+                                  ? { ...t, unread_comments_count: 0, unread_internal_notes_count: 0 }
+                                  : t
+                              )
+                            };
+                          }
+                        );
+
+                        // Navigate to the ticket
+                        router.push(`/tickets/${ticket.id}`);
+                      }}
+                    >
                     {isAdmin && (
                       <TableCell data-no-navigate onClick={(e) => e.stopPropagation()}>
                         <Checkbox
@@ -481,15 +725,28 @@ export default function TicketsPage() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{ticket.ticket_number}</span>
-                          {ticket.comments_count && ticket.comments_count > 0 && (
+                          {/* Total comments count - always show if there are comments */}
+                          {ticket.comments_count > 0 && (
                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
                               <MessageSquare className="h-3 w-3" />
                               {ticket.comments_count}
                             </div>
                           )}
+                          {/* Unread regular comments indicator (blue) - only show when > 0 */}
+                          {(ticket.unread_comments_count ?? 0) > 0 && (
+                            <div className="flex items-center justify-center h-5 min-w-5 px-1.5 bg-blue-500 text-white text-xs font-semibold rounded-full">
+                              {ticket.unread_comments_count}
+                            </div>
+                          )}
+                          {/* Unread internal notes indicator (yellow) - only show when > 0 */}
+                          {(ticket.unread_internal_notes_count ?? 0) > 0 && (
+                            <div className="flex items-center justify-center h-5 min-w-5 px-1.5 bg-yellow-500 text-white text-xs font-semibold rounded-full">
+                              {ticket.unread_internal_notes_count}
+                            </div>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground line-clamp-1">
-                          {ticket.subject}
+                          {ticket.subject || '(No Subject)'}
                         </p>
                       </div>
                     </TableCell>
@@ -533,23 +790,39 @@ export default function TicketsPage() {
                       </div>
                     </TableCell>
                     {isAdmin && (
-                      <TableCell className="text-right" data-no-navigate>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTicketToDelete(ticket.id);
-                            setIsDeleteDialogOpen(true);
-                          }}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      <TableCell className="text-right opacity-100" data-no-navigate>
+                        {activeTab === 'archived' ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTicketToRestore(ticket.id);
+                              setIsRestoreDialogOpen(true);
+                            }}
+                            className="text-green-700 border-2 border-green-500 bg-green-50 hover:bg-green-100 hover:text-green-800 hover:border-green-600 opacity-100 shadow-md"
+                          >
+                            <CheckCircle className="h-5 w-5 stroke-[3]" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTicketToArchive(ticket.id);
+                              setIsArchiveDialogOpen(true);
+                            }}
+                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                          >
+                            <Archive className="h-4 w-4" />
+                          </Button>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>
-                ))
+                );
+                })
               )}
             </TableBody>
           </Table>
@@ -654,31 +927,61 @@ export default function TicketsPage() {
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      {/* Archive Confirmation Dialog */}
+      <AlertDialog open={isArchiveDialogOpen} onOpenChange={setIsArchiveDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Ticket?</AlertDialogTitle>
+            <AlertDialogTitle>Archive Ticket?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this ticket? This action cannot be undone and will permanently delete all ticket data.
+              Are you sure you want to archive this ticket? Archived tickets can be viewed in the Archived tab and can be restored if needed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel
               onClick={() => {
-                setIsDeleteDialogOpen(false);
-                setTicketToDelete(null);
+                setIsArchiveDialogOpen(false);
+                setTicketToArchive(null);
               }}
-              disabled={isDeleting}
+              disabled={isArchiving}
             >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => ticketToDelete && handleDeleteTicket(ticketToDelete)}
-              disabled={isDeleting}
-              className="bg-red-500 hover:bg-red-600"
+              onClick={() => ticketToArchive && handleArchiveTicket(ticketToArchive)}
+              disabled={isArchiving}
+              className="bg-orange-600 hover:bg-orange-700"
             >
-              {isDeleting ? 'Deleting...' : 'Delete Ticket'}
+              {isArchiving ? 'Archiving...' : 'Archive Ticket'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Restore Confirmation Dialog */}
+      <AlertDialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore Ticket?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to restore this ticket? It will be moved back to active tickets.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsRestoreDialogOpen(false);
+                setTicketToRestore(null);
+              }}
+              disabled={isRestoring}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => ticketToRestore && handleRestoreTicket(ticketToRestore)}
+              disabled={isRestoring}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isRestoring ? 'Restoring...' : 'Restore Ticket'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

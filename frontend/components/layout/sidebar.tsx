@@ -26,6 +26,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
@@ -36,7 +46,7 @@ import { NotificationBell } from '@/components/notifications/notification-bell';
 
 const getNavigation = (notificationCounts: any, userRole?: string) => [
   {
-    name: userRole === 'agent' ? 'My Queue' : 'Dashboard',
+    name: 'Dashboard',
     href: userRole === 'agent' ? '/dashboard/agent' : '/dashboard',
     icon: LayoutDashboard
   },
@@ -44,7 +54,7 @@ const getNavigation = (notificationCounts: any, userRole?: string) => [
     name: 'Tickets',
     href: '/tickets',
     icon: Ticket,
-    badge: notificationCounts?.new_tickets > 0 ? notificationCounts.new_tickets : undefined
+    badge: notificationCounts?.open_tickets > 0 ? `${notificationCounts.open_tickets} Open` : undefined
   },
   { name: 'Customers', href: '/customers', icon: Users },
   {
@@ -56,18 +66,22 @@ const getNavigation = (notificationCounts: any, userRole?: string) => [
   ...(userRole === 'admin' ? [{ name: 'Reports', href: '/reports', icon: BarChart3 }] : []),
 ];
 
-const bottomNavigation = [
-  { name: 'Settings', href: '/settings', icon: Settings },
-];
+const bottomNavigation: any[] = [];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const { user, logout } = useAuth();
   const { isCollapsed, toggle } = useSidebar();
   const { data: notificationCounts } = useNotificationCounts();
 
   const navigation = getNavigation(notificationCounts, user?.role);
+
+  const handleLogout = async () => {
+    setIsLogoutDialogOpen(false);
+    await logout();
+  };
 
   return (
     <>
@@ -138,8 +152,14 @@ export function Sidebar() {
                     Settings
                   </Link>
                 </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/help" target="_blank" rel="noopener noreferrer">
+                    <HelpCircle className="mr-2 h-4 w-4" />
+                    Help Center
+                  </Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => logout()}>
+                <DropdownMenuItem onClick={() => setIsLogoutDialogOpen(true)}>
                   <LogOut className="mr-2 h-4 w-4" />
                   Log out
                 </DropdownMenuItem>
@@ -148,6 +168,24 @@ export function Sidebar() {
           </div>
         </div>
       </div>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={isLogoutDialogOpen} onOpenChange={setIsLogoutDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to log out?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will be signed out of your account and redirected to the login page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogout} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-950 dark:text-red-400 dark:hover:bg-red-900">
+              Log out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
@@ -206,7 +244,7 @@ export function Sidebar() {
                         </Badge>
                         {/* Dot indicator for collapsed state */}
                         {isCollapsed && (
-                          <div className="hidden lg:block absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full"></div>
+                          <div className="hidden lg:block absolute top-1 right-1 h-2 w-2 bg-foreground rounded-full"></div>
                         )}
                       </>
                     )}

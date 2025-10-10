@@ -104,6 +104,7 @@ class AggregateMetricsJob extends Job
         // Aggregate ticket statistics
         $ticketStats = DB::table('tickets')
             ->whereDate('created_at', $date)
+            ->where('is_archived', false)
             ->selectRaw('
                 COUNT(*) as total_tickets,
                 COUNT(CASE WHEN status = ? THEN 1 END) as new_tickets,
@@ -129,6 +130,7 @@ class AggregateMetricsJob extends Job
         $categoryBreakdown = DB::table('tickets')
             ->leftJoin('categories', 'tickets.category_id', '=', 'categories.id')
             ->whereDate('tickets.created_at', $date)
+            ->where('tickets.is_archived', false)
             ->select('categories.name', DB::raw('COUNT(*) as count'))
             ->groupBy('categories.name')
             ->get()
@@ -138,6 +140,7 @@ class AggregateMetricsJob extends Job
         // Get source breakdown
         $sourceBreakdown = DB::table('tickets')
             ->whereDate('created_at', $date)
+            ->where('is_archived', false)
             ->select('source', DB::raw('COUNT(*) as count'))
             ->groupBy('source')
             ->get()
@@ -178,6 +181,7 @@ class AggregateMetricsJob extends Job
         $hourlyStats = DB::table('tickets')
             ->where('created_at', '>=', $hour)
             ->where('created_at', '<', Carbon::parse($hour)->addHour())
+            ->where('is_archived', false)
             ->selectRaw('
                 COUNT(*) as total_tickets,
                 AVG(CASE
@@ -210,6 +214,7 @@ class AggregateMetricsJob extends Job
             $agentStats = DB::table('tickets')
                 ->where('assigned_to', $agentId)
                 ->whereBetween('created_at', [$startDate, $endDate])
+                ->where('is_archived', false)
                 ->selectRaw('
                     COUNT(*) as total_assigned,
                     COUNT(CASE WHEN status = ? THEN 1 END) as resolved_tickets,
@@ -282,6 +287,7 @@ class AggregateMetricsJob extends Job
         // Get top 100 clients by ticket volume
         $topClients = DB::table('tickets')
             ->whereBetween('created_at', [$startDate, $endDate])
+            ->where('is_archived', false)
             ->select('client_id', DB::raw('COUNT(*) as ticket_count'))
             ->groupBy('client_id')
             ->orderBy('ticket_count', 'desc')
@@ -292,6 +298,7 @@ class AggregateMetricsJob extends Job
             $clientStats = DB::table('tickets')
                 ->where('client_id', $clientId)
                 ->whereBetween('created_at', [$startDate, $endDate])
+                ->where('is_archived', false)
                 ->selectRaw('
                     COUNT(*) as total_tickets,
                     COUNT(CASE WHEN status IN (?, ?, ?) THEN 1 END) as open_tickets,
@@ -318,6 +325,7 @@ class AggregateMetricsJob extends Job
                 ->leftJoin('categories', 'tickets.category_id', '=', 'categories.id')
                 ->where('tickets.client_id', $clientId)
                 ->whereBetween('tickets.created_at', [$startDate, $endDate])
+                ->where('tickets.is_archived', false)
                 ->select('categories.name', DB::raw('COUNT(*) as count'))
                 ->groupBy('categories.name')
                 ->get()
@@ -355,6 +363,7 @@ class AggregateMetricsJob extends Job
         $slaStats = DB::table('tickets')
             ->whereDate('created_at', $date)
             ->whereNotNull('sla_deadline')
+            ->where('is_archived', false)
             ->selectRaw('
                 COUNT(*) as total_tickets_with_sla,
                 COUNT(CASE
@@ -376,6 +385,7 @@ class AggregateMetricsJob extends Job
         $priorityBreakdown = DB::table('tickets')
             ->whereDate('created_at', $date)
             ->whereNotNull('sla_deadline')
+            ->where('is_archived', false)
             ->select('priority', DB::raw('
                 COUNT(*) as total,
                 COUNT(CASE
@@ -414,6 +424,7 @@ class AggregateMetricsJob extends Job
     {
         $categoryStats = DB::table('tickets')
             ->whereDate('created_at', $date)
+            ->where('is_archived', false)
             ->select('category_id', DB::raw('
                 COUNT(*) as ticket_count,
                 AVG(CASE

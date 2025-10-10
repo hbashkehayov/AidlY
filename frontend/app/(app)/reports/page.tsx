@@ -249,7 +249,7 @@ export default function ReportsPage() {
         entity: 'ticket',
         entity_id: ticket.id,
         user_name: ticket.client_name || 'System',
-        description: `Created ticket #${ticket.ticket_number}: ${ticket.subject}`,
+        description: `Created ticket #${ticket.ticket_number}: ${ticket.subject || '(No Subject)'}`,
         timestamp: ticket.created_at,
       });
 

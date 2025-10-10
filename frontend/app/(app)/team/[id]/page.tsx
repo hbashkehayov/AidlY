@@ -194,10 +194,6 @@ export default function UserProfilePage() {
             </p>
           </div>
         </div>
-        <Button variant="outline" onClick={() => router.push('/settings')}>
-          <Edit className="h-4 w-4 mr-2" />
-          Edit Member
-        </Button>
       </div>
 
       {/* Profile Overview */}
@@ -314,7 +310,7 @@ export default function UserProfilePage() {
                       >
                         <TableCell>
                           <div>
-                            <p className="font-medium">{ticket.subject}</p>
+                            <p className="font-medium">{ticket.subject || '(No Subject)'}</p>
                             <p className="text-sm text-muted-foreground">#{ticket.ticket_number}</p>
                           </div>
                         </TableCell>
@@ -391,17 +387,6 @@ export default function UserProfilePage() {
                     {user.created_at ? format(new Date(user.created_at), 'PPP') : '-'}
                   </p>
                 </div>
-              </div>
-              <Separator />
-              <div className="flex gap-2">
-                <Button variant="outline">
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit Member
-                </Button>
-                <Button variant="outline">
-                  <Mail className="h-4 w-4 mr-2" />
-                  Send Email
-                </Button>
               </div>
             </CardContent>
           </Card>

@@ -267,7 +267,20 @@ class ImapService
 
         // Convert inline images (CID references) to base64 data URIs
         if ($bodyHtml && !empty($attachments)) {
+            \Log::info('Before embedding inline images', [
+                'message_id' => $message->getMessageId(),
+                'html_preview' => substr($bodyHtml, 0, 500),
+                'attachment_count' => count($attachments),
+                'inline_attachment_count' => count(array_filter($attachments, fn($a) => $a['is_inline'] ?? false)),
+            ]);
+
             $bodyHtml = $this->embedInlineImages($bodyHtml, $attachments, $message);
+
+            \Log::info('After embedding inline images', [
+                'message_id' => $message->getMessageId(),
+                'html_preview' => substr($bodyHtml, 0, 500),
+                'contains_data_uri' => strpos($bodyHtml, 'data:image') !== false,
+            ]);
         }
 
         // Extract headers

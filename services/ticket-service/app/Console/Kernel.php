@@ -24,10 +24,12 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // Run auto-close command every hour
+        // Run auto-close command daily at 2 AM
+        // Closes tickets that have been resolved for more than 2 days
         $schedule->command('tickets:auto-close-resolved')
-            ->hourly()
+            ->dailyAt('02:00')
             ->withoutOverlapping()
-            ->runInBackground();
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/auto-close-tickets.log'));
     }
 }

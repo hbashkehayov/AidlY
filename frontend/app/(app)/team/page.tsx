@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { useAuth } from '@/lib/auth';
@@ -59,17 +59,17 @@ const roleConfig = {
 export default function TeamPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<any>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   // Check if current user is admin
   const isAdmin = user?.role === 'admin';
 
-  // Fetch all users
-  const { data: usersData, isLoading, refetch } = useQuery({
+  // Fetch all users with automatic refresh
+  const { data: usersData, isLoading } = useQuery({
     queryKey: ['users', roleFilter],
     queryFn: async () => {
       const params: any = {};
@@ -79,6 +79,11 @@ export default function TeamPage() {
       const response = await api.users.list(params);
       return response.data;
     },
+    // Automatic refresh settings
+    refetchOnWindowFocus: true,  // Refetch when user returns to window
+    refetchOnMount: true,         // Refetch when component mounts
+    refetchOnReconnect: true,     // Refetch when internet reconnects
+    staleTime: 10000,             // Consider data stale after 10 seconds
   });
 
   // Extract users first (before hooks)
@@ -94,6 +99,8 @@ export default function TeamPage() {
     },
     enabled: isAdmin && users.length > 0,
     staleTime: 30000, // Cache for 30 seconds
+    refetchOnWindowFocus: true,  // Refetch when user returns to window
+    refetchOnMount: true,         // Refetch when component mounts
   });
 
   const getRoleBadge = (role: string) => {
@@ -128,28 +135,63 @@ export default function TeamPage() {
       : 'U';
   };
 
+  // Delete mutation with optimistic updates
+  const deleteMutation = useMutation({
+    mutationFn: (userId: string) => api.users.delete(userId),
+    // Optimistic update: Remove user from UI immediately
+    onMutate: async (userId) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['users'] });
+      await queryClient.cancelQueries({ queryKey: ['user-ticket-stats'] });
+
+      // Snapshot previous values
+      const previousUsers = queryClient.getQueryData(['users', roleFilter]);
+      const previousStats = queryClient.getQueryData(['user-ticket-stats']);
+
+      // Optimistically remove the user
+      queryClient.setQueryData(['users', roleFilter], (old: any) => {
+        if (!old) return old;
+        const users = old.data || old;
+        if (!Array.isArray(users)) return old;
+
+        const filteredUsers = users.filter((u: any) => u.id !== userId);
+        return old.data ? { ...old, data: filteredUsers } : filteredUsers;
+      });
+
+      // Return snapshot for rollback
+      return { previousUsers, previousStats, userId };
+    },
+    onSuccess: (_data, _variables, context) => {
+      toast.success('Team member deleted successfully');
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    },
+    onError: (error: any, _variables, context) => {
+      // Rollback on error
+      if (context?.previousUsers) {
+        queryClient.setQueryData(['users', roleFilter], context.previousUsers);
+      }
+      if (context?.previousStats) {
+        queryClient.setQueryData(['user-ticket-stats'], context.previousStats);
+      }
+      toast.error(error.response?.data?.message || 'Failed to delete team member');
+    },
+    // Always refetch to ensure consistency
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['user-ticket-stats'] });
+    },
+  });
+
   const handleDeleteClick = (user: any, e: React.MouseEvent) => {
     e.stopPropagation();
     setUserToDelete(user);
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = () => {
     if (!userToDelete) return;
-
-    setIsDeleting(true);
-    try {
-      await api.users.delete(userToDelete.id);
-      toast.success('User deleted successfully');
-      setDeleteDialogOpen(false);
-      setUserToDelete(null);
-      refetch(); // Refresh the user list
-    } catch (error: any) {
-      console.error('Failed to delete user:', error);
-      toast.error(error.response?.data?.message || 'Failed to delete user');
-    } finally {
-      setIsDeleting(false);
-    }
+    deleteMutation.mutate(userToDelete.id);
   };
 
   const handleEditClick = (userId: string, e: React.MouseEvent) => {
@@ -170,7 +212,7 @@ export default function TeamPage() {
           </p>
         </div>
         {isAdmin && (
-          <Button onClick={() => router.push('/settings?tab=users')}>
+          <Button onClick={() => router.push('/team/new')}>
             <Users className="mr-2 h-4 w-4" />
             Add Team Member
           </Button>
@@ -387,18 +429,26 @@ export default function TeamPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Team Member</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete <strong>{userToDelete?.name}</strong>? This action cannot be undone and will permanently remove the user account and all associated data.
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Are you sure you want to delete <strong>{userToDelete?.name}</strong>? This action cannot be undone.
+              </p>
+              <div className="rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 p-3">
+                <p className="text-sm text-amber-900 dark:text-amber-200">
+                  <strong>Note:</strong> All tickets currently assigned to this user will be automatically unassigned.
+                  The tickets will remain in the system and can be reassigned to other team members.
+                </p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
-              disabled={isDeleting}
+              disabled={deleteMutation.isPending}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isDeleting ? 'Deleting...' : 'Delete'}
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

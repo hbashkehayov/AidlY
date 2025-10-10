@@ -68,6 +68,9 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
         // Store sent message ID for email threading
         $router->post('tickets/{id}/message-id', 'TicketController@storeMessageId');
 
+        // Mark ticket as viewed
+        $router->post('tickets/{id}/mark-viewed', 'TicketController@markViewed');
+
         // Get specific ticket by ID
         $router->get('tickets/{id}', 'TicketController@show');
 
@@ -88,6 +91,9 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
         // Delete all tickets for a client (for client service) - Public for inter-service communication
         $router->delete('clients/{clientId}/tickets', 'TicketController@deleteClientTickets');
+
+        // Unassign all tickets for a user (for auth service when deleting users) - Public for inter-service communication
+        $router->put('tickets/unassign-user/{userId}', 'TicketController@unassignUserTickets');
 
     });
 
@@ -117,6 +123,7 @@ $router->group(['prefix' => 'api/v1'], function () use ($router) {
 
             // Ticket actions
             $router->post('{id}/assign', 'TicketController@assign');
+            $router->post('{id}/claim', 'TicketController@claim'); // Self-assign (claim) a ticket
             $router->post('{id}/comments', 'TicketController@addComment');
             $router->get('{id}/comments', 'CommentController@index'); // Get comments for specific ticket
             $router->get('{id}/history', 'TicketController@history');

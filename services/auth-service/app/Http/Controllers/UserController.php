@@ -266,14 +266,62 @@ class UserController extends Controller
         }
 
         try {
+            // Before deleting the user, unassign all their tickets
+            // This ensures tickets are not lost when a user is deleted
+            $ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://ticket-service:8002/api/v1');
+
+            $client = new \GuzzleHttp\Client([
+                'verify' => false,
+                'timeout' => 10,
+                'http_errors' => false, // Don't throw exceptions on HTTP errors
+            ]);
+
+            // Call ticket service to unassign all tickets for this user
+            $response = $client->put($ticketServiceUrl . '/public/tickets/unassign-user/' . $id, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            $responseBody = json_decode($response->getBody(), true);
+
+            if ($statusCode >= 200 && $statusCode < 300) {
+                \Illuminate\Support\Facades\Log::info('Unassigned tickets for user before deletion', [
+                    'user_id' => $id,
+                    'response' => $responseBody
+                ]);
+            } else {
+                // If ticket unassignment fails, don't delete the user to prevent foreign key violation
+                \Illuminate\Support\Facades\Log::error('Failed to unassign tickets, aborting user deletion', [
+                    'user_id' => $id,
+                    'status_code' => $statusCode,
+                    'response' => $responseBody
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to unassign user tickets. Cannot delete user.',
+                    'error' => $responseBody['message'] ?? 'Unknown error from ticket service'
+                ], 500);
+            }
+
+            // Now delete the user (tickets have been unassigned)
             $user->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'User deleted successfully'
+                'message' => 'User deleted successfully. ' . ($responseBody['data']['tickets_unassigned'] ?? 0) . ' ticket(s) were unassigned.'
             ]);
 
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Exception during user deletion', [
+                'user_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete user',

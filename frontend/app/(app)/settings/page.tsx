@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth';
 import { useState, useEffect } from 'react';
@@ -15,12 +14,14 @@ import { toast } from 'sonner';
 import { useSearchParams } from 'next/navigation';
 import api from '@/lib/api';
 import {
-  Users,
   Eye,
   EyeOff,
   Moon,
   Sun,
   Monitor,
+  Volume2,
+  VolumeX,
+  Play,
 } from 'lucide-react';
 import {
   Select,
@@ -29,10 +30,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  NOTIFICATION_SOUNDS,
+  playNotificationPreview,
+  getSelectedNotificationSound,
+  saveNotificationSound,
+} from '@/lib/notification-sounds';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { cn } from '@/lib/utils';
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const searchParams = useSearchParams();
 
   // Get tab from URL parameter, default to 'profile'
@@ -40,6 +49,10 @@ export default function SettingsPage() {
 
   // Font size state
   const [fontSize, setFontSize] = useState('medium');
+
+  // Notification sound state
+  const [notificationSound, setNotificationSound] = useState(true);
+  const [selectedSoundType, setSelectedSoundType] = useState('ding');
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -55,6 +68,18 @@ export default function SettingsPage() {
       console.log('Settings page - Loading saved font size for user:', user.id, savedFontSize);
       setFontSize(savedFontSize);
       document.documentElement.setAttribute('data-font-size', savedFontSize);
+    }
+  }, [user?.id]);
+
+  // Load notification sound preference on mount
+  useEffect(() => {
+    if (user?.id) {
+      const savedSoundPref = localStorage.getItem(`notifications_sound_${user.id}`);
+      const soundEnabled = savedSoundPref !== 'false'; // Default to true
+      setNotificationSound(soundEnabled);
+
+      const savedSoundType = getSelectedNotificationSound(user.id);
+      setSelectedSoundType(savedSoundType);
     }
   }, [user?.id]);
 
@@ -98,9 +123,47 @@ export default function SettingsPage() {
     console.log('Settings page - Changing theme to:', newTheme, 'for user:', user.id);
     setTheme(newTheme);
     localStorage.setItem(`theme_${user.id}`, newTheme);
+  };
 
-    const themeName = newTheme.charAt(0).toUpperCase() + newTheme.slice(1);
-    toast.success(`Theme changed to ${themeName}`);
+  // Handle notification sound toggle
+  const handleNotificationSoundToggle = (enabled: boolean) => {
+    if (!user?.id) {
+      toast.error('Please log in to save preferences');
+      return;
+    }
+
+    console.log('Settings page - Toggling notification sound to:', enabled, 'for user:', user.id);
+    setNotificationSound(enabled);
+    localStorage.setItem(`notifications_sound_${user.id}`, String(enabled));
+
+    // Play a test sound when enabling
+    if (enabled) {
+      playNotificationPreview(selectedSoundType);
+      toast.success('Notification sounds enabled');
+    } else {
+      toast.success('Notification sounds disabled');
+    }
+  };
+
+  // Handle sound type change
+  const handleSoundTypeChange = (soundId: string) => {
+    if (!user?.id) {
+      toast.error('Please log in to save preferences');
+      return;
+    }
+
+    console.log('Settings page - Changing notification sound to:', soundId, 'for user:', user.id);
+    setSelectedSoundType(soundId);
+    saveNotificationSound(user.id, soundId);
+
+    const soundName = NOTIFICATION_SOUNDS.find(s => s.id === soundId)?.name || soundId;
+    toast.success(`Notification sound changed to ${soundName}`);
+  };
+
+  // Handle sound preview
+  const handlePlayPreview = (soundId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    playNotificationPreview(soundId);
   };
 
   // Profile update state
@@ -120,21 +183,6 @@ export default function SettingsPage() {
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
-  });
-
-  // User creation form state (for admin)
-  const [isLoading, setIsLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: '',
-    role: 'agent',
-    enableEmailIntegration: false,
-    gmailAddress: '',
-    gmailAppPassword: '',
-    agentSignature: ''
   });
 
   // Update profile data when user changes
@@ -227,84 +275,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleInputChange = (field: string, value: string | boolean) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleCreateUser = async () => {
-    if (!formData.name || !formData.email || !formData.password) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    if (formData.password !== formData.confirmPassword) {
-      toast.error('Passwords do not match');
-      return;
-    }
-
-    if (formData.enableEmailIntegration && (!formData.gmailAddress || !formData.gmailAppPassword)) {
-      toast.error('Gmail address and app password are required for email integration');
-      return;
-    }
-
-    setIsLoading(true);
-
-    if (!token) {
-      toast.error('Authentication token not found. Please log in again.');
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const response = await fetch('/api/agents', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-          password_confirmation: formData.confirmPassword,
-          role: formData.role,
-          enable_email_integration: formData.enableEmailIntegration,
-          gmail_address: formData.gmailAddress,
-          gmail_app_password: formData.gmailAppPassword,
-          agent_signature: formData.agentSignature || `Best regards,\n${formData.name}\nAidlY Support Team`
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('User created successfully!');
-        setFormData({
-          name: '',
-          email: '',
-          password: '',
-          confirmPassword: '',
-          role: 'agent',
-          enableEmailIntegration: false,
-          gmailAddress: '',
-          gmailAppPassword: '',
-          agentSignature: ''
-        });
-      } else {
-        if (data.message === 'Invalid or expired token') {
-          toast.error('Your session has expired. Please log in again.');
-        } else {
-          toast.error(data.message || 'Failed to create user');
-        }
-      }
-    } catch (error) {
-      console.error('User creation error:', error);
-      toast.error('Network error. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div>
@@ -318,9 +288,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="appearance">Appearance</TabsTrigger>
-          {user?.role === 'admin' && (
-            <TabsTrigger value="users">User Management</TabsTrigger>
-          )}
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="space-y-4">
@@ -494,171 +462,98 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {user?.role === 'admin' && (
-          <TabsContent value="users" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="h-5 w-5" />
-                  Create New User
-                </CardTitle>
-                <CardDescription>
-                  Add a new agent to the platform with optional email integration
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Full Name *</Label>
-                    <Input
-                      id="name"
-                      placeholder="John Doe"
-                      value={formData.name}
-                      onChange={(e) => handleInputChange('name', e.target.value)}
-                    />
+        <TabsContent value="notifications" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Notification Preferences</CardTitle>
+              <CardDescription>
+                Manage how you receive notifications
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    {notificationSound ? (
+                      <Volume2 className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <VolumeX className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <Label htmlFor="notification-sound" className="text-base font-medium cursor-pointer">
+                      Sound Notifications
+                    </Label>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email Address *</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="john@company.com"
-                      value={formData.email}
-                      onChange={(e) => handleInputChange('email', e.target.value)}
-                    />
-                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Play a sound when you receive new notifications
+                  </p>
                 </div>
+                <Switch
+                  id="notification-sound"
+                  checked={notificationSound}
+                  onCheckedChange={handleNotificationSoundToggle}
+                />
+              </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password *</Label>
-                    <div className="relative">
-                      <Input
-                        id="password"
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="Enter password"
-                        value={formData.password}
-                        onChange={(e) => handleInputChange('password', e.target.value)}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-0 top-0 h-full px-3"
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confirmPassword">Confirm Password *</Label>
-                    <Input
-                      id="confirmPassword"
-                      type="password"
-                      placeholder="Confirm password"
-                      value={formData.confirmPassword}
-                      onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="role">Role</Label>
-                  <Select
-                    value={formData.role}
-                    onValueChange={(value) => handleInputChange('role', value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="agent">Agent</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">Enable Email Integration</p>
-                      <p className="text-xs text-muted-foreground">
-                        Allow this user to fetch emails and send replies through their Gmail account
-                      </p>
-                    </div>
-                    <Switch
-                      checked={formData.enableEmailIntegration}
-                      onCheckedChange={(checked) => handleInputChange('enableEmailIntegration', checked)}
-                    />
-                  </div>
-
-                  {formData.enableEmailIntegration && (
-                    <div className="space-y-4 rounded-lg border p-4 bg-muted/50">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="gmailAddress">Gmail Address *</Label>
-                          <Input
-                            id="gmailAddress"
-                            type="email"
-                            placeholder="john.agent@gmail.com"
-                            value={formData.gmailAddress}
-                            onChange={(e) => handleInputChange('gmailAddress', e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="gmailAppPassword">Gmail App Password *</Label>
-                          <Input
-                            id="gmailAppPassword"
-                            type="password"
-                            placeholder="xxxx xxxx xxxx xxxx"
-                            value={formData.gmailAppPassword}
-                            onChange={(e) => handleInputChange('gmailAppPassword', e.target.value)}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Generate an app password in your Gmail security settings
-                          </p>
-                        </div>
-                      </div>
-
+              {notificationSound && (
+                <>
+                  <Separator />
+                  <div className="space-y-3">
+                    <Label className="text-base font-medium">Notification Sound</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Choose which sound to play for notifications
+                    </p>
+                    <RadioGroup value={selectedSoundType} onValueChange={handleSoundTypeChange}>
                       <div className="space-y-2">
-                        <Label htmlFor="agentSignature">Email Signature (Optional)</Label>
-                        <Textarea
-                          id="agentSignature"
-                          placeholder={`Best regards,\n${formData.name}\nAidlY Support Team`}
-                          rows={4}
-                          value={formData.agentSignature}
-                          onChange={(e) => handleInputChange('agentSignature', e.target.value)}
-                        />
+                        {NOTIFICATION_SOUNDS.map((sound) => (
+                          <div
+                            key={sound.id}
+                            className={cn(
+                              "flex items-center justify-between space-x-2 rounded-lg border p-3 transition-colors",
+                              selectedSoundType === sound.id
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:bg-accent"
+                            )}
+                          >
+                            <div className="flex items-center space-x-3 flex-1">
+                              <RadioGroupItem value={sound.id} id={sound.id} />
+                              <Label
+                                htmlFor={sound.id}
+                                className="flex-1 cursor-pointer space-y-0.5"
+                              >
+                                <div className="font-medium">{sound.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {sound.description}
+                                </div>
+                              </Label>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={(e) => handlePlayPreview(sound.id, e)}
+                              title="Play preview"
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
                       </div>
+                    </RadioGroup>
+                  </div>
+                </>
+              )}
 
-                      <div className="rounded-lg bg-blue-50 p-3 text-sm">
-                        <p className="font-medium text-blue-900">Email Integration Benefits:</p>
-                        <ul className="mt-1 space-y-1 text-blue-800">
-                          <li>• Automatic email fetching every 5 minutes</li>
-                          <li>• Replies sent from agent's own Gmail address</li>
-                          <li>• Professional email threading and formatting</li>
-                          <li>• Centralized ticket management</li>
-                        </ul>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-4">
-                  <Button
-                    onClick={handleCreateUser}
-                    disabled={isLoading}
-                    className="w-full"
-                  >
-                    {isLoading ? 'Creating User...' : 'Create User'}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+              <Separator />
+              <div className="rounded-lg bg-muted p-4">
+                <p className="text-sm text-muted-foreground">
+                  <strong>Note:</strong> Sound notifications will only play when new notifications arrive.
+                  The bell icon updates every 3 seconds to check for new notifications.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </div>
   );

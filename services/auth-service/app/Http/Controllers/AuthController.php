@@ -66,6 +66,14 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->role,
+                    'department_id' => $user->department_id,
+                    'avatar_url' => $user->avatar_url,
+                    'email_verified_at' => $user->email_verified_at,
+                    'two_factor_enabled' => $user->two_factor_enabled,
+                    'is_active' => $user->is_active,
+                    'last_login_at' => $user->last_login_at,
+                    'created_at' => $user->created_at,
+                    'updated_at' => $user->updated_at,
                 ],
                 'access_token' => $accessToken,
                 'refresh_token' => $refreshToken,
@@ -111,14 +119,6 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Check if account is locked
-        if ($user->isLocked()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Account is locked due to too many failed login attempts. Please try again later.'
-            ], 423);
-        }
-
         // Check if account is active
         if (!$user->is_active) {
             return response()->json([
@@ -129,15 +129,13 @@ class AuthController extends Controller
 
         // Verify password
         if (!Hash::check($request->password, $user->password_hash)) {
-            $user->incrementLoginAttempts();
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid credentials'
             ], 401);
         }
 
-        // Reset login attempts and update last login
-        $user->resetLoginAttempts();
+        // Update last login
         $user->updateLastLogin($request->ip());
 
         // Generate tokens
@@ -152,6 +150,14 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'department_id' => $user->department_id,
+                'avatar_url' => $user->avatar_url,
+                'email_verified_at' => $user->email_verified_at,
+                'two_factor_enabled' => $user->two_factor_enabled,
+                'is_active' => $user->is_active,
+                'last_login_at' => $user->last_login_at,
+                'created_at' => $user->created_at,
+                'updated_at' => $user->updated_at,
             ],
             'access_token' => $accessToken,
             'refresh_token' => $refreshToken,
@@ -472,6 +478,14 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'department_id' => $user->department_id,
+                'avatar_url' => $user->avatar_url,
+                'email_verified_at' => $user->email_verified_at,
+                'two_factor_enabled' => $user->two_factor_enabled,
+                'is_active' => $user->is_active,
+                'last_login_at' => $user->last_login_at,
+                'created_at' => $user->created_at,
+                'updated_at' => $user->updated_at,
             ]
         ]);
     }

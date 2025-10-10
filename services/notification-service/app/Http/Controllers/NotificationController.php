@@ -21,7 +21,7 @@ class NotificationController extends Controller
                 'status' => 'sometimes|in:pending,sent,delivered,read,failed',
                 'type' => 'sometimes|string',
                 'channel' => 'sometimes|string',
-                'limit' => 'sometimes|integer|min:1|max:100',
+                'limit' => 'sometimes|integer|min:1|max:10000',
                 'offset' => 'sometimes|integer|min:0',
                 'unread_only' => 'sometimes|in:0,1,true,false',
                 'view_all' => 'sometimes|in:0,1,true,false', // For admin to view all

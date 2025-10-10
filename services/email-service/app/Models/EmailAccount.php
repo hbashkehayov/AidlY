@@ -172,7 +172,7 @@ class EmailAccount extends Model
      */
     public function getSignatureTemplate(): string
     {
-        return $this->signature_template ?: "\n\n---\nBest regards,\n{agent_name}\n{department_name}\n{company_name}";
+        return $this->signature_template ?: "Regards,\n{agent_name}";
     }
 
     /**

@@ -13,7 +13,8 @@ class RoleMiddleware
      */
     public function handle(Request $request, Closure $next, string $role)
     {
-        $user = $request->user ?? auth()->user();
+        // Get user from request attributes (set by JwtMiddleware)
+        $user = $request->attributes->get('auth_user') ?? $request->user;
 
         if (!$user) {
             return $this->forbiddenResponse('User not authenticated');

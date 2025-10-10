@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -24,12 +24,16 @@ import {
   Edit3,
   Building,
   CheckCircle,
+  Check,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Download,
   FileText,
   FileImage,
   File,
+  Ticket,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -113,8 +117,8 @@ const getFileIcon = (mimeType?: string, filename?: string) => {
   return File;
 };
 
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 Bytes';
+const formatFileSize = (bytes?: number | null): string => {
+  if (!bytes || bytes === 0) return '0 Bytes';
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -165,17 +169,69 @@ const blockExternalImages = (html: string): string => {
   );
 };
 
-const cleanEmailThreadMetadata = (content: string): string => {
+const cleanEmailThreadMetadata = (content: string, isHtml: boolean = false): string => {
   if (!content) return content;
 
-  // Remove HTML tags first
-  let cleaned = content.replace(/<[^>]*>/g, '');
+  let cleaned = content;
+
+  if (isHtml) {
+    // Strip out email history/quoted content for HTML
+    cleaned = cleaned
+      // Remove everything after "On ... wrote:" pattern
+      .replace(/On\s+.+?\s+wrote:[\s\S]*/gi, '')
+      // Remove blockquote elements (common in email replies)
+      .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, '')
+      // Remove Gmail quote div
+      .replace(/<div class="gmail_quote"[\s\S]*?<\/div>/gi, '')
+      // Remove generic quote divs
+      .replace(/<div[^>]*class="[^"]*quote[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '')
+      // Remove "From:" headers (email forwarding)
+      .replace(/From:[\s\S]*?Subject:[\s\S]*?(?=<|$)/gi, '')
+      // Remove hr separators often used in email threads
+      .replace(/<hr[^>]*>/gi, '');
+
+    return cleaned;
+  }
+
+  // Remove HTML tags first for plain text
+  cleaned = cleaned.replace(/<[^>]*>/g, '');
+
+  // For plain text, remove quoted lines (lines starting with >)
+  const lines = cleaned.split('\n');
+  const cleanLines: string[] = [];
+  let inQuote = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+
+    // Detect start of email quote section
+    if (trimmedLine.match(/^On\s+.+?\s+wrote:/i) ||
+        trimmedLine.match(/^From:/i) ||
+        trimmedLine.match(/^-{3,}/) ||
+        trimmedLine.startsWith('>')) {
+      inQuote = true;
+      continue;
+    }
+
+    // Skip quoted lines
+    if (inQuote) {
+      // Stop quote section if we hit a non-quoted, non-empty line
+      if (trimmedLine && !trimmedLine.startsWith('>')) {
+        inQuote = false;
+        cleanLines.push(line);
+      }
+      continue;
+    }
+
+    cleanLines.push(line);
+  }
+
+  cleaned = cleanLines.join('\n').trim();
 
   // Split by common footer/signature patterns and take only the first part
   const footerPatterns = [
-    /On\s+.+?(wrote|said):/i,
     /Ticket Update:/i,
-    /From:/i,
     /View Full Ticket/i,
     /This is an automated message/i,
     /Best regards/i,
@@ -185,7 +241,6 @@ const cleanEmailThreadMetadata = (content: string): string => {
     /Sent from/i,
     /Get Outlook/i,
     /Ticket\s*#[A-Z]+-\d+/i,
-    /[-_]{2,}/,  // Signature separator
   ];
 
   // Find the earliest occurrence of any footer pattern
@@ -199,9 +254,6 @@ const cleanEmailThreadMetadata = (content: string): string => {
 
   // Cut the string at the earliest footer pattern
   cleaned = cleaned.substring(0, cutoffIndex);
-
-  // Remove quoted text that starts with >
-  cleaned = cleaned.replace(/^>.*$/gm, '');
 
   // Remove excessive whitespace and newlines
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
@@ -232,6 +284,17 @@ export default function TicketPage() {
   const [showExternalImages, setShowExternalImages] = useState<Record<string, boolean>>({});
   const [dismissedForwardMessages, setDismissedForwardMessages] = useState<string[]>([]);
   const [isClosingReply, setIsClosingReply] = useState(false);
+  const [isClientSidebarOpen, setIsClientSidebarOpen] = useState(true);
+  const [isActionsSidebarOpen, setIsActionsSidebarOpen] = useState(true);
+  const [isOpenTicketsExpanded, setIsOpenTicketsExpanded] = useState(true);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [noteContent, setNoteContent] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteContent, setEditingNoteContent] = useState('');
+  const [hiddenNoteIds, setHiddenNoteIds] = useState<string[]>([]);
+  const [deleteNoteId, setDeleteNoteId] = useState<string | null>(null);
+  const [isCloseConfirmDialogOpen, setIsCloseConfirmDialogOpen] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<string | null>(null);
 
   // Data fetching
   const { data: ticket, isLoading, error } = useQuery({
@@ -251,6 +314,12 @@ export default function TicketPage() {
       }
     },
     enabled: !!ticketId,
+    // Real-time updates - more aggressive polling
+    refetchInterval: 2000, // Poll every 2 seconds for real-time updates on individual ticket
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+    refetchIntervalInBackground: true, // Continue polling in background for updates
+    refetchOnMount: true, // Always refetch on mount
+    refetchOnReconnect: true, // Refetch when connection is restored
   });
 
   // Set initial edit form data when ticket loads
@@ -265,6 +334,46 @@ export default function TicketPage() {
       });
     }
   }, [ticket, ticketId, editedTicket]);
+
+  // Track previous assigned agent to detect reassignment
+  const previousAssignedAgentId = useRef<string | null>(null);
+
+  // Ref for reply area to enable auto-scroll
+  const replyAreaRef = useRef<HTMLDivElement>(null);
+
+  // Redirect user if ticket is reassigned away from them
+  useEffect(() => {
+    if (ticket && user) {
+      // If this is the first load, just store the current assignment
+      if (previousAssignedAgentId.current === null) {
+        previousAssignedAgentId.current = ticket.assigned_agent_id || null;
+        return;
+      }
+
+      // Check if ticket was assigned to current user but is now assigned to someone else (or unassigned)
+      const wasAssignedToMe = previousAssignedAgentId.current === user.id;
+      const isNowAssignedToSomeoneElse = ticket.assigned_agent_id !== user.id;
+
+      if (wasAssignedToMe && isNowAssignedToSomeoneElse) {
+        // Ticket was reassigned away from current user - redirect to tickets list
+        toast.info('This ticket has been reassigned');
+        router.push('/tickets');
+      }
+
+      // Update the ref with current assignment
+      previousAssignedAgentId.current = ticket.assigned_agent_id || null;
+    }
+  }, [ticket?.assigned_agent_id, user, router]);
+
+  // Auto-scroll to reply area when it opens
+  useEffect(() => {
+    if (showComposeReply && replyAreaRef.current) {
+      // Use a slight delay to ensure the animation has started
+      setTimeout(() => {
+        replyAreaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [showComposeReply]);
 
   // Extract forward messages from internal notes
   const forwardMessages = ticket?.comments
@@ -291,17 +400,77 @@ export default function TicketPage() {
     queryFn: () => api.categories.list().then(res => res.data?.data || res.data || []),
   });
 
+  // Fetch other tickets from this client (open tickets only)
+  const { data: clientTicketsData, isLoading: isLoadingClientTickets } = useQuery({
+    queryKey: ['client-tickets', ticket?.client?.id],
+    queryFn: async () => {
+      if (!ticket?.client?.id) return [];
+      try {
+        const response = await api.tickets.list({
+          client_id: ticket.client.id,
+          limit: 50
+        });
+        console.log('Client tickets response:', response.data);
+        let tickets = [];
+        if (response.data?.success && response.data?.data) {
+          tickets = response.data.data;
+        } else {
+          tickets = response.data?.data || response.data || [];
+        }
+        // Filter for open statuses on client side
+        const openTickets = tickets.filter((t: any) =>
+          ['open', 'new', 'pending'].includes(t.status?.toLowerCase())
+        );
+        console.log('Filtered open tickets:', openTickets);
+        return openTickets;
+      } catch (err) {
+        console.error('Error fetching client tickets:', err);
+        return [];
+      }
+    },
+    enabled: !!ticket?.client?.id,
+  });
+
   // Mutations
   const updateTicketMutation = useMutation({
     mutationFn: async (data: any) => {
       const response = await api.tickets.update(ticketId as string, data);
       return response.data;
     },
+    onMutate: async (updatedData) => {
+      // Cancel any outgoing refetches to avoid overwriting our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['ticket', ticketId] });
+
+      // Snapshot the previous value
+      const previousTicket = queryClient.getQueryData(['ticket', ticketId]);
+
+      // Optimistically update the ticket
+      queryClient.setQueryData(['ticket', ticketId], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          data: {
+            ...old.data,
+            ...updatedData,
+          },
+        };
+      });
+
+      // Return a context with the previous ticket
+      return { previousTicket };
+    },
     onSuccess: () => {
+      // Invalidate single ticket query
       queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      // Invalidate tickets list to update in real-time
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
       toast.success('Ticket updated successfully');
     },
-    onError: (error: any) => {
+    onError: (error: any, updatedData, context: any) => {
+      // Rollback to the previous value on error
+      if (context?.previousTicket) {
+        queryClient.setQueryData(['ticket', ticketId], context.previousTicket);
+      }
       console.error('Update error:', error);
       const message = error.response?.data?.error?.message || 'Failed to update ticket';
       toast.error(message);
@@ -318,7 +487,9 @@ export default function TicketPage() {
       setReplyEmail('');
       setReplyName('');
       setReplyAttachments([]);
+      // Invalidate both ticket and tickets list queries
       queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      queryClient.invalidateQueries({ queryKey: ['tickets'] });
       toast.success('Reply sent successfully');
     },
     onError: (error: any) => {
@@ -483,7 +654,7 @@ export default function TicketPage() {
       <div className="flex flex-col items-center justify-center h-screen gap-4">
         <AlertCircle className="h-12 w-12 text-muted-foreground" />
         <p className="text-lg text-muted-foreground">Ticket not found</p>
-        <Button onClick={() => router.push('/tickets')} variant="outline">
+        <Button onClick={() => router.back()} variant="outline">
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back to Tickets
         </Button>
@@ -506,6 +677,37 @@ export default function TicketPage() {
     company: null,
   };
 
+  const clientTickets = (clientTicketsData || []).filter((t: any) => t.id !== ticketId);
+
+  // Check if ticket is closed
+  const isTicketClosed = ticket?.status?.toLowerCase() === 'closed';
+
+  // Check if ticket is NOT assigned to current user
+  // If it's unassigned OR assigned to someone else, it's read-only
+  // Only editable if assigned to current user
+  const isNotAssignedToCurrentUser = !ticket?.assigned_agent_id || ticket?.assigned_agent_id !== user?.id;
+
+  // Handler for status changes that checks for "closed" status
+  const handleStatusChange = (newStatus: string) => {
+    if (newStatus === 'closed' && ticket?.status?.toLowerCase() !== 'closed') {
+      // Show confirmation dialog
+      setPendingStatusChange(newStatus);
+      setIsCloseConfirmDialogOpen(true);
+    } else {
+      // Update immediately for other statuses
+      updateTicketMutation.mutate({ status: newStatus });
+    }
+  };
+
+  // Handler for confirming close action
+  const handleConfirmClose = () => {
+    if (pendingStatusChange) {
+      updateTicketMutation.mutate({ status: pendingStatusChange });
+      setIsCloseConfirmDialogOpen(false);
+      setPendingStatusChange(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
       <TooltipProvider>
@@ -515,7 +717,7 @@ export default function TicketPage() {
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center gap-4">
                 <Button
-                  onClick={() => router.push('/tickets')}
+                  onClick={() => router.back()}
                   variant="ghost"
                   size="sm"
                   className="text-gray-600 hover:text-gray-900"
@@ -542,14 +744,66 @@ export default function TicketPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {/* Claim Ticket Button */}
+                {isAuthenticated && (() => {
+                  const isAssignedToCurrentUser = ticket.assigned_agent?.id === user?.id;
+                  const isAssignedToSomeoneElse = ticket.assigned_agent && !isAssignedToCurrentUser;
+
+                  // Button is disabled only when assigned to current user
+                  const isDisabled = isAssignedToCurrentUser;
+
+                  return (
+                    <Button
+                      variant={isDisabled ? "outline" : "default"}
+                      size="sm"
+                      disabled={isDisabled}
+                      onClick={async () => {
+                        if (isDisabled) return;
+                        try {
+                          await api.tickets.claim(ticket.id);
+                          // Refresh ticket data and tickets list
+                          queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+                          queryClient.invalidateQueries({ queryKey: ['tickets'] });
+                          toast.success(isAssignedToSomeoneElse ? 'Ticket re-claimed successfully' : 'Ticket claimed successfully');
+                        } catch (error) {
+                          console.error('Failed to claim ticket:', error);
+                          toast.error('Failed to claim ticket. Please try again.');
+                        }
+                      }}
+                      className={cn(
+                        isDisabled
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed hover:bg-gray-100"
+                          : "bg-blue-600 hover:bg-blue-700 text-white"
+                      )}
+                    >
+                      {isDisabled ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 mr-1" />
+                          Claimed
+                        </>
+                      ) : isAssignedToSomeoneElse ? (
+                        <>
+                          <User className="h-4 w-4 mr-1" />
+                          Re-Claim Ticket
+                        </>
+                      ) : (
+                        <>
+                          <User className="h-4 w-4 mr-1" />
+                          Claim Ticket
+                        </>
+                      )}
+                    </Button>
+                  );
+                })()}
+
                 {!isAuthenticated && (
                   <Button
                     asChild
                     variant="outline"
                     size="sm"
                   >
-                    <Link href="/auth/login">
+                    <Link href="/login">
                       <User className="h-4 w-4 mr-1" />
                       Login
                     </Link>
@@ -559,78 +813,149 @@ export default function TicketPage() {
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <User className="h-4 w-4" />
                     <span>{user?.name}</span>
-                    <span className="text-gray-400">|</span>
                   </div>
                 )}
-                <Button
-                  onClick={handleToggleReply}
-                  variant={showComposeReply ? "default" : "outline"}
-                  size="sm"
-                  className={showComposeReply ? "bg-gray-900 hover:bg-gray-800 text-white" : ""}
-                >
-                  <Reply className="h-4 w-4 mr-1" />
-                  Reply
-                </Button>
-
-                <Button
-                  onClick={() => setIsForwardDialogOpen(true)}
-                  variant="outline"
-                  size="sm"
-                >
-                  <Forward className="h-4 w-4 mr-1" />
-                  Forward
-                </Button>
               </div>
             </div>
           </div>
         </div>
 
         {/* Three-panel layout - Responsive */}
-        <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-4rem)]">
-          {/* Client Panel - Hidden on mobile, shown on desktop */}
-          <div className="hidden lg:flex w-64 xl:w-80 bg-white border-r border-gray-200 flex-col flex-shrink-0">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <User className="h-5 w-5" />
-                Client
-              </h3>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-12 w-12">
-                    <AvatarFallback className="bg-gray-100 text-gray-900 text-lg font-semibold">
-                      {clientInfo.name.charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold text-gray-900">{clientInfo.name}</h4>
-                    <p className="text-sm text-gray-600 truncate">{clientInfo.email}</p>
-                  </div>
-                </div>
+        <div className="flex flex-col lg:flex-row min-h-[calc(100vh-4rem)]">
+          {/* Client Panel - Hidden on mobile, collapsible on desktop */}
+          <div className={cn(
+            "hidden lg:flex bg-white border-r border-gray-200 flex-col flex-shrink-0 transition-all duration-300",
+            isClientSidebarOpen ? "w-64 xl:w-80" : "w-12"
+          )}>
+            <div className="p-6 border-b border-gray-200 relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute top-2 right-2 h-8 w-8 p-0"
+                onClick={() => setIsClientSidebarOpen(!isClientSidebarOpen)}
+              >
+                {isClientSidebarOpen ? (
+                  <ChevronLeft className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+              </Button>
+              {isClientSidebarOpen && (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Client
+                  </h3>
+                  <div className="space-y-4">
+                    {/* Clickable Client Info */}
+                    <Link
+                      href={ticket.client?.id ? `/customers/${ticket.client.id}` : '#'}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                    >
+                      <Avatar className="h-12 w-12">
+                        <AvatarFallback className="bg-gray-100 text-gray-900 text-lg font-semibold">
+                          {clientInfo.name.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-gray-900 hover:text-blue-600">{clientInfo.name}</h4>
+                        <p className="text-sm text-gray-600 truncate">{clientInfo.email}</p>
+                      </div>
+                    </Link>
 
-                <div className="space-y-3 pt-4 border-t border-gray-200">
-                  <div className="flex items-center gap-3 text-sm">
-                    <Mail className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-600">{clientInfo.email}</span>
-                  </div>
-                  {clientInfo.company && (
-                    <div className="flex items-center gap-3 text-sm">
-                      <Building className="h-4 w-4 text-gray-400" />
-                      <span className="text-gray-600">{clientInfo.company}</span>
+                    <div className="space-y-3 pt-4 border-t border-gray-200">
+                      <div className="flex items-center gap-3 text-sm">
+                        <Mail className="h-4 w-4 text-gray-400" />
+                        <span className="text-gray-600">{clientInfo.email}</span>
+                      </div>
+                      {clientInfo.company && (
+                        <div className="flex items-center gap-3 text-sm">
+                          <Building className="h-4 w-4 text-gray-400" />
+                          <span className="text-gray-600">{clientInfo.company}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3 text-sm">
+                        <Calendar className="h-4 w-4 text-gray-400" />
+                        <span className="text-gray-600">
+                          Client since {ticket.created_at ? format(new Date(ticket.created_at), 'MMM yyyy') : 'Unknown'}
+                        </span>
+                      </div>
                     </div>
-                  )}
-                  <div className="flex items-center gap-3 text-sm">
-                    <Calendar className="h-4 w-4 text-gray-400" />
-                    <span className="text-gray-600">
-                      Client since {ticket.created_at ? format(new Date(ticket.created_at), 'MMM yyyy') : 'Unknown'}
-                    </span>
+
+                    {/* Open Tickets from this Client - Collapsible */}
+                    <div className="pt-4 border-t border-gray-200">
+                      <button
+                        onClick={() => setIsOpenTicketsExpanded(!isOpenTicketsExpanded)}
+                        className="w-full flex items-center justify-between text-sm font-semibold text-gray-900 mb-3 hover:text-gray-700 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Ticket className="h-4 w-4" />
+                          Open Tickets ({clientTickets.length})
+                        </div>
+                        {isOpenTicketsExpanded ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </button>
+                      {isOpenTicketsExpanded && (
+                        <>
+                          {isLoadingClientTickets ? (
+                            <div className="text-xs text-gray-500 py-2">Loading tickets...</div>
+                          ) : clientTickets.length > 0 ? (
+                            <div className="max-h-60 overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+                              {clientTickets.map((ticket: any) => (
+                                <Link
+                                  key={ticket.id}
+                                  href={`/tickets/${ticket.id}`}
+                                  className="block p-2 rounded-lg hover:bg-gray-50 transition-colors border border-gray-200"
+                                >
+                                  <p className="text-sm font-medium text-gray-900 truncate hover:text-blue-600">
+                                    {ticket.subject || 'No Subject'}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs text-gray-500">
+                                      #{ticket.ticket_number}
+                                    </span>
+                                    <span className="text-xs text-gray-400">•</span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {ticket.status}
+                                    </Badge>
+                                  </div>
+                                </Link>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-500 py-2">No other open tickets from this client</p>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           </div>
 
           {/* Conversation Panel - Main content */}
-          <div className="flex-1 flex flex-col bg-white min-w-0 overflow-hidden">
+          <div className="flex-1 flex flex-col bg-white min-w-0">
+            {/* Read-Only Banner for Closed Tickets */}
+            {isTicketClosed && (
+              <div className="bg-red-50 border-b border-red-200 px-6 py-3">
+                <div className="flex items-center gap-3">
+                  <XCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-red-800">
+                      This ticket is closed and in read-only mode
+                    </p>
+                    <p className="text-xs text-red-700">
+                      No modifications can be made to closed tickets. All editing features are disabled.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Ticket Header */}
             <div className="p-6 border-b border-gray-200">
               <h1 className="text-xl font-semibold text-gray-900 mb-2">
@@ -688,7 +1013,7 @@ export default function TicketPage() {
             </div>
 
             {/* Conversation Area */}
-            <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+            <div className="flex-1 p-4 lg:p-6">
               <div className="max-w-4xl mx-auto space-y-4">
               {/* Original Message - Gmail Style */}
               <div className="border rounded-lg bg-white">
@@ -731,7 +1056,7 @@ export default function TicketPage() {
                 </div>
                 <div className="px-4 pb-4">
                   {/* External images warning banner */}
-                  {hasExternalImages(ticket.description) && !showExternalImages['ticket-main'] && (
+                  {hasExternalImages(ticket.description_html || ticket.description) && !showExternalImages['ticket-main'] && (
                     <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
                       <div className="flex items-center gap-2 text-sm text-blue-800">
                         <AlertCircle className="h-4 w-4" />
@@ -748,40 +1073,51 @@ export default function TicketPage() {
                     </div>
                   )}
 
-                  {/* Render full HTML email with iframe for security */}
-                  {ticket.description && (ticket.description.includes('<html') || ticket.description.includes('<body') || ticket.description.includes('<table') || ticket.description.includes('<div')) ? (
-                    ticket.description.includes('<html') ? (
-                      <iframe
-                        srcDoc={showExternalImages['ticket-main'] ? ticket.description : blockExternalImages(ticket.description)}
-                        sandbox="allow-same-origin"
-                        className="w-full border-0 min-h-[400px]"
-                        style={{ height: 'auto' }}
-                        onLoad={(e) => {
-                          const iframe = e.target as HTMLIFrameElement;
-                          if (iframe.contentWindow) {
-                            const height = iframe.contentWindow.document.body.scrollHeight;
-                            iframe.style.height = height + 'px';
-                          }
-                        }}
-                      />
-                    ) : (
-                      <div className="prose prose-sm max-w-none">
-                        <div
-                          className="email-content"
-                          dangerouslySetInnerHTML={{
-                            __html: showExternalImages['ticket-main']
-                              ? ticket.description || ''
-                              : blockExternalImages(ticket.description || '')
-                          }}
-                          style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
-                        />
-                      </div>
-                    )
-                  ) : (
-                    <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
-                      {ticket.description}
-                    </pre>
-                  )}
+                  {/* Render full HTML email with iframe for security - prefer description_html over description */}
+                  {(() => {
+                    const displayContent = ticket.description_html || ticket.description;
+                    const isHtml = displayContent && (displayContent.includes('<html') || displayContent.includes('<body') || displayContent.includes('<table') || displayContent.includes('<div'));
+
+                    if (isHtml) {
+                      if (displayContent.includes('<html')) {
+                        return (
+                          <iframe
+                            srcDoc={showExternalImages['ticket-main'] ? displayContent : blockExternalImages(displayContent)}
+                            sandbox="allow-same-origin"
+                            className="w-full border-0 min-h-[400px]"
+                            style={{ height: 'auto' }}
+                            onLoad={(e) => {
+                              const iframe = e.target as HTMLIFrameElement;
+                              if (iframe.contentWindow) {
+                                const height = iframe.contentWindow.document.body.scrollHeight;
+                                iframe.style.height = height + 'px';
+                              }
+                            }}
+                          />
+                        );
+                      } else {
+                        return (
+                          <div className="prose prose-sm max-w-none">
+                            <div
+                              className="email-content"
+                              dangerouslySetInnerHTML={{
+                                __html: showExternalImages['ticket-main']
+                                  ? displayContent || ''
+                                  : blockExternalImages(displayContent || '')
+                              }}
+                              style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
+                            />
+                          </div>
+                        );
+                      }
+                    } else {
+                      return (
+                        <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
+                          {ticket.description}
+                        </pre>
+                      );
+                    }
+                  })()}
                   {ticket.attachments && ticket.attachments.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-gray-200">
                       <div className="flex items-center gap-2 mb-3">
@@ -792,7 +1128,9 @@ export default function TicketPage() {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         {ticket.attachments.map((attachment: any) => {
-                          const FileIcon = getFileIcon(attachment.mime_type, attachment.filename);
+                          const filename = attachment.filename || attachment.file_name || 'Unknown file';
+                          const fileSize = attachment.size ?? attachment.file_size;
+                          const FileIcon = getFileIcon(attachment.mime_type, filename);
                           return (
                             <div
                               key={attachment.id}
@@ -805,17 +1143,17 @@ export default function TicketPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-gray-900 truncate">
-                                  {attachment.filename}
+                                  {filename}
                                 </p>
                                 <p className="text-xs text-gray-500">
-                                  {formatFileSize(attachment.size)}
+                                  {formatFileSize(fileSize)}
                                 </p>
                               </div>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={() => handleDownloadAttachment(attachment.id, attachment.filename)}
+                                onClick={() => handleDownloadAttachment(attachment.id, filename)}
                               >
                                 <Download className="h-4 w-4" />
                               </Button>
@@ -826,24 +1164,15 @@ export default function TicketPage() {
                     </div>
                   )}
                 </div>
-                <div className="px-4 pb-4 flex items-center gap-2">
+                <div className="px-4 pb-4 flex items-center justify-end gap-2">
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={() => setShowComposeReply(true)}
-                    className="gap-2"
+                    className="gap-2 bg-black hover:bg-gray-800 text-white"
+                    disabled={isTicketClosed || isNotAssignedToCurrentUser}
                   >
                     <Reply className="h-4 w-4" />
-                    Reply
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsForwardDialogOpen(true)}
-                    className="gap-2"
-                  >
-                    <Forward className="h-4 w-4" />
-                    Forward
+                    {isTicketClosed ? 'Ticket Closed' : isNotAssignedToCurrentUser ? 'Not Assigned to You' : 'Reply'}
                   </Button>
                 </div>
               </div>
@@ -853,9 +1182,15 @@ export default function TicketPage() {
                 <div className="space-y-6">
                   {ticket.comments
                     .filter((comment: TicketComment) =>
-                      // Filter out forward messages (they're shown above)
-                      !(comment.is_internal_note && comment.content?.startsWith('FORWARD_MESSAGE:'))
+                      // Filter out ALL internal notes (they're shown in sidebar only)
+                      !comment.is_internal_note
                     )
+                    .sort((a: TicketComment, b: TicketComment) => {
+                      // Sort by created_at descending (newest first)
+                      const dateA = new Date(a.created_at).getTime();
+                      const dateB = new Date(b.created_at).getTime();
+                      return dateB - dateA;
+                    })
                     .map((comment: TicketComment) => {
                     const isExpanded = expandedEmails[comment.id] === true;
 
@@ -888,98 +1223,63 @@ export default function TicketPage() {
                     const initials = senderName.split(' ').map((n: any) => n[0]).join('').toUpperCase().slice(0, 2);
                     const displayContent = comment.body_html || comment.content;
 
-                    return (
-                      <div
-                        key={comment.id}
-                        className={cn(
-                          "flex gap-3",
-                          isFromAgent ? "flex-row-reverse" : "flex-row"
-                        )}
-                      >
-                        {/* Avatar */}
-                        <Avatar className={cn(
-                          "h-10 w-10 flex-shrink-0",
-                          isFromAgent && "ring-2 ring-indigo-100"
-                        )}>
-                          <AvatarFallback
-                            className={cn(
-                              "font-semibold text-white",
-                              comment.is_internal_note
-                                ? "bg-amber-500"
-                                : isFromAgent
-                                  ? "bg-indigo-600"
-                                  : "bg-blue-500"
-                            )}
-                          >
-                            {initials}
-                          </AvatarFallback>
-                        </Avatar>
+                    // Auto-expand short messages (less than 300 chars and no attachments)
+                    const isShortMessage = (comment.body_plain || displayContent || '').length < 300;
+                    const hasAttachments = comment.attachments && comment.attachments.length > 0;
+                    const shouldAutoExpand = isShortMessage && !hasAttachments;
+                    const isExpandedFinal = expandedEmails[comment.id] !== undefined
+                      ? expandedEmails[comment.id]
+                      : shouldAutoExpand;
 
-                        {/* Message Bubble */}
-                        <div className={cn(
-                          "flex-1 max-w-[85%]",
-                          isFromAgent ? "ml-auto" : "mr-auto"
-                        )}>
+                    return (
+                      <div key={comment.id} className="mb-4">
+                        {/* Message Card */}
+                        <div
+                          className={cn(
+                            "rounded border p-4",
+                            comment.is_internal_note
+                              ? "bg-amber-50 border-amber-200"
+                              : isFromAgent
+                                ? "bg-gray-50 border-gray-200"
+                                : "bg-white border-gray-200"
+                          )}
+                        >
                           {/* Sender Info Header */}
-                          <div className={cn(
-                            "flex items-center gap-2 mb-2",
-                            isFromAgent ? "flex-row-reverse" : "flex-row"
-                          )}>
-                            <span className={cn(
-                              "font-semibold text-sm",
-                              comment.is_internal_note
-                                ? "text-amber-700"
-                                : isFromAgent
-                                  ? "text-indigo-900"
-                                  : "text-blue-900"
-                            )}>
-                              {senderName}
-                            </span>
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "text-xs font-medium",
-                                comment.is_internal_note
-                                  ? "bg-amber-50 text-amber-700 border-amber-300"
-                                  : isFromAgent
-                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                    : "bg-blue-50 text-blue-700 border-blue-200"
-                              )}
-                            >
-                              {comment.is_internal_note ? '🔒 Internal Note' : isFromAgent ? '👤 Agent' : '💬 Client'}
-                            </Badge>
-                            {senderEmail && (
-                              <span className="text-xs text-gray-500">
-                                {senderEmail}
-                              </span>
+                          <div className="flex items-center justify-between mb-2">
+                            {isFromAgent ? (
+                              <>
+                                <span className="text-xs text-gray-500">
+                                  {format(new Date(comment.created_at), 'MMM d, h:mm a')}
+                                </span>
+                                <span className="font-medium text-sm text-foreground">
+                                  {senderName}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-medium text-sm text-foreground">
+                                  {senderName}
+                                </span>
+                                <span className="text-xs text-gray-500">
+                                  {format(new Date(comment.created_at), 'MMM d, h:mm a')}
+                                </span>
+                              </>
                             )}
-                            <span className="text-xs text-gray-500">
-                              {format(new Date(comment.created_at), 'MMM d, h:mm a')}
-                            </span>
                           </div>
 
-                          {/* Message Content Card */}
-                          <div
-                            className={cn(
-                              "rounded-2xl shadow-sm transition-all border",
-                              comment.is_internal_note
-                                ? "bg-amber-50 border-amber-200"
-                                : isFromAgent
-                                  ? "bg-white border-gray-200"
-                                  : "bg-blue-50 border-blue-200"
-                            )}
-                          >
-                            <div className="p-4">
+                          {/* Message Content */}
+                          <div>
+                            {/* Show collapse button only for long messages or those with attachments */}
+                            {(!shouldAutoExpand) && (
                               <div className={cn(
                                 "flex items-start justify-between gap-2 mb-2",
-                                !isExpanded && "mb-0"
+                                !isExpandedFinal && "mb-0"
                               )}>
                                 <div className="flex-1 min-w-0">
-
                                   {/* Collapsed preview */}
-                                  {!isExpanded && (
-                                    <p className="text-sm text-gray-700 line-clamp-2">
-                                      {cleanEmailThreadMetadata(comment.body_plain || displayContent || '').substring(0, 150) || 'No content'}
+                                  {!isExpandedFinal && (
+                                    <p className={cn("text-sm text-gray-700 line-clamp-2", isFromAgent && "text-right")}>
+                                      {cleanEmailThreadMetadata(comment.body_plain || displayContent || '', false).substring(0, 150) || 'No content'}
                                     </p>
                                   )}
                                 </div>
@@ -989,27 +1289,28 @@ export default function TicketPage() {
                                   variant="ghost"
                                   size="sm"
                                   className="h-8 w-8 p-0 flex-shrink-0"
-                                  onClick={() => setExpandedEmails(prev => ({ ...prev, [comment.id]: !isExpanded }))}
+                                  onClick={() => setExpandedEmails(prev => ({ ...prev, [comment.id]: !isExpandedFinal }))}
                                 >
-                                  {isExpanded ? (
+                                  {isExpandedFinal ? (
                                     <ChevronUp className="h-4 w-4 text-gray-600" />
                                   ) : (
                                     <ChevronDown className="h-4 w-4 text-gray-600" />
                                   )}
                                 </Button>
                               </div>
+                            )}
 
-                              {/* Attachments preview when collapsed */}
-                              {!isExpanded && comment.attachments && comment.attachments.length > 0 && (
-                                <div className="flex items-center gap-1 mt-2 text-xs text-gray-500">
-                                  <Paperclip className="h-3 w-3" />
-                                  <span>{comment.attachments.length} attachment{comment.attachments.length !== 1 && 's'}</span>
-                                </div>
+                            {/* Attachments preview when collapsed */}
+                            {!isExpandedFinal && hasAttachments && (
+                              <div className="flex items-center gap-1 mt-2 text-xs text-gray-500">
+                                <Paperclip className="h-3 w-3" />
+                                <span>{comment.attachments.length} attachment{comment.attachments.length !== 1 && 's'}</span>
+                              </div>
                               )}
 
-                              {/* Expanded Message Body */}
-                              {isExpanded && (
-                                <div className="mt-3 pt-3 border-t border-gray-200">
+                              {/* Message Body (Always shown for short messages, expandable for long ones) */}
+                              {isExpandedFinal && (
+                                <div className={cn(!shouldAutoExpand && "mt-3 pt-3 border-t border-gray-200")}>
                             {/* External images warning banner */}
                             {hasExternalImages(displayContent) && !showExternalImages[comment.id] && (
                               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
@@ -1031,7 +1332,7 @@ export default function TicketPage() {
                             {/* Render full HTML email with iframe for security if it's a complete HTML doc */}
                             {displayContent && displayContent.includes('<html') ? (
                               <iframe
-                                srcDoc={showExternalImages[comment.id] ? displayContent : blockExternalImages(displayContent)}
+                                srcDoc={showExternalImages[comment.id] ? cleanEmailThreadMetadata(displayContent, true) : blockExternalImages(cleanEmailThreadMetadata(displayContent, true))}
                                 sandbox="allow-same-origin"
                                 className="w-full border-0 min-h-[400px]"
                                 style={{ height: 'auto' }}
@@ -1043,31 +1344,50 @@ export default function TicketPage() {
                                   }
                                 }}
                               />
-                            ) : (
-                              <div className="prose prose-sm max-w-none">
+                            ) : displayContent && displayContent.includes('<') ? (
+                              // HTML content without full document
+                              <div className={cn("prose prose-sm max-w-none text-gray-700", isFromAgent && "text-right")}>
                                 <div
                                   className="email-content"
                                   dangerouslySetInnerHTML={{
                                     __html: showExternalImages[comment.id]
-                                      ? displayContent
-                                      : blockExternalImages(displayContent)
+                                      ? cleanEmailThreadMetadata(displayContent, true)
+                                      : blockExternalImages(cleanEmailThreadMetadata(displayContent, true))
                                   }}
                                   style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}
                                 />
                               </div>
+                            ) : (
+                              // Plain text content - preserve line breaks and paragraphs
+                              <div className={cn("text-sm text-gray-700 whitespace-pre-wrap leading-relaxed", isFromAgent && "text-right")}>
+                                {cleanEmailThreadMetadata(comment.body_plain || displayContent || '', false)}
+                              </div>
                             )}
 
-                            {comment.attachments && comment.attachments.length > 0 && (
-                              <div className="mt-4 pt-4 border-t border-gray-200">
-                                <div className="flex items-center gap-2 mb-3">
-                                  <Paperclip className="h-4 w-4 text-gray-500" />
-                                  <span className="text-sm font-medium text-gray-700">
-                                    {comment.attachments.length} attachment{comment.attachments.length !== 1 && 's'}
-                                  </span>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                  {comment.attachments.map((attachment: any) => {
-                                    const FileIcon = getFileIcon(attachment.mime_type, attachment.filename);
+                            {(() => {
+                              // Filter attachments to only show those belonging to this specific comment
+                              const commentAttachments = comment.attachments?.filter(
+                                (attachment: any) => {
+                                  const attachmentCommentId = attachment.comment_id || attachment.ticket_comment_id;
+                                  return attachmentCommentId && attachmentCommentId === comment.id;
+                                }
+                              ) || [];
+
+                              if (commentAttachments.length === 0) return null;
+
+                              return (
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <Paperclip className="h-4 w-4 text-gray-500" />
+                                    <span className="text-sm font-medium text-gray-700">
+                                      {commentAttachments.length} attachment{commentAttachments.length !== 1 && 's'}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {commentAttachments.map((attachment: any) => {
+                                    const filename = attachment.filename || attachment.file_name || 'Unknown file';
+                                    const fileSize = attachment.size ?? attachment.file_size;
+                                    const FileIcon = getFileIcon(attachment.mime_type, filename);
                                     return (
                                       <div
                                         key={attachment.id}
@@ -1080,17 +1400,17 @@ export default function TicketPage() {
                                         </div>
                                         <div className="flex-1 min-w-0">
                                           <p className="text-sm font-medium text-gray-900 truncate">
-                                            {attachment.filename}
+                                            {filename}
                                           </p>
                                           <p className="text-xs text-gray-500">
-                                            {formatFileSize(attachment.size)}
+                                            {formatFileSize(fileSize)}
                                           </p>
                                         </div>
                                         <Button
                                           variant="ghost"
                                           size="sm"
                                           className="opacity-0 group-hover:opacity-100 transition-opacity"
-                                          onClick={() => handleDownloadAttachment(attachment.id, attachment.filename)}
+                                          onClick={() => handleDownloadAttachment(attachment.id, filename)}
                                         >
                                           <Download className="h-4 w-4" />
                                         </Button>
@@ -1099,10 +1419,10 @@ export default function TicketPage() {
                                   })}
                                 </div>
                               </div>
-                            )}
-                                </div>
-                              )}
-                            </div>
+                              );
+                            })()}
+                          </div>
+                        )}
                           </div>
                         </div>
                       </div>
@@ -1115,12 +1435,15 @@ export default function TicketPage() {
 
             {/* Reply Area */}
             {showComposeReply && (
-              <div className={cn(
-                "border-t border-gray-200 p-6 bg-gray-50 transition-all duration-200",
-                isClosingReply
-                  ? "animate-out slide-out-to-bottom-4 fade-out"
-                  : "animate-in slide-in-from-bottom-4 fade-in"
-              )}>
+              <div
+                ref={replyAreaRef}
+                className={cn(
+                  "border-t border-gray-200 p-6 bg-gray-50 transition-all duration-200",
+                  isClosingReply
+                    ? "animate-out slide-out-to-bottom-4 fade-out"
+                    : "animate-in slide-in-from-bottom-4 fade-in"
+                )}
+              >
                 {isAuthenticated ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -1219,7 +1542,7 @@ export default function TicketPage() {
                         </Button>
                       </div>
                       <div className="text-sm text-gray-500">
-                        Or <Link href="/auth/login" className="text-primary underline">log in</Link> for full features
+                        Or <Link href="/login" className="text-primary underline">log in</Link> for full features
                       </div>
                     </div>
                   </div>
@@ -1228,21 +1551,39 @@ export default function TicketPage() {
             )}
           </div>
 
-          {/* Action Panel - Hidden on mobile */}
-          <div className="hidden lg:block w-64 xl:w-80 bg-white border-l border-gray-200 p-4 xl:p-6 flex-shrink-0 overflow-y-auto">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Tag className="h-5 w-5" />
-              Quick Actions
-            </h3>
-
-            <div className="space-y-4">
+          {/* Action Panel - Hidden on mobile, collapsible on desktop */}
+          <div className={cn(
+            "hidden lg:block bg-white border-l border-gray-200 flex-shrink-0 overflow-y-auto transition-all duration-300",
+            isActionsSidebarOpen ? "w-64 xl:w-80 p-4 xl:p-6" : "w-12 p-2"
+          )}>
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute top-0 left-0 h-8 w-8 p-0"
+                onClick={() => setIsActionsSidebarOpen(!isActionsSidebarOpen)}
+              >
+                {isActionsSidebarOpen ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronLeft className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            {isActionsSidebarOpen && (
+              <>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2 mt-8">
+                  <Tag className="h-5 w-5" />
+                  Quick Actions
+                </h3>
+                <div className="space-y-4">
               {/* Status */}
               <div>
                 <Label className="text-sm font-medium text-gray-700">Status</Label>
                 <Select
                   value={ticket.status || 'open'}
-                  onValueChange={(value) => updateTicketMutation.mutate({ status: value })}
-                  disabled={updateTicketMutation.isPending}
+                  onValueChange={handleStatusChange}
+                  disabled={updateTicketMutation.isPending || isTicketClosed || isNotAssignedToCurrentUser}
                 >
                   <SelectTrigger className="w-full mt-1">
                     <SelectValue />
@@ -1254,6 +1595,9 @@ export default function TicketPage() {
                     <SelectItem value="closed">Closed</SelectItem>
                   </SelectContent>
                 </Select>
+                {isTicketClosed && (
+                  <p className="text-xs text-red-600 mt-1">Ticket is closed and read-only</p>
+                )}
               </div>
 
               {/* Priority */}
@@ -1262,7 +1606,7 @@ export default function TicketPage() {
                 <Select
                   value={ticket.priority || 'medium'}
                   onValueChange={(value) => updateTicketMutation.mutate({ priority: value })}
-                  disabled={updateTicketMutation.isPending}
+                  disabled={updateTicketMutation.isPending || isTicketClosed || isNotAssignedToCurrentUser}
                 >
                   <SelectTrigger className="w-full mt-1">
                     <SelectValue />
@@ -1296,21 +1640,54 @@ export default function TicketPage() {
                 </Select>
               </div>
 
-              {/* Assigned Agent - Read Only */}
+              {/* Assigned Agent - Editable Dropdown */}
               <div>
                 <Label className="text-sm font-medium text-gray-700">Assigned To</Label>
-                <div className="mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-700">
-                  {ticket.assigned_agent_id ? (
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-gray-500" />
-                      <span>
-                        {agents.find((agent: any) => agent.id === ticket.assigned_agent_id)?.name || 'Unknown Agent'}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-gray-500 italic">Unassigned</span>
-                  )}
-                </div>
+                <Select
+                  value={ticket.assigned_agent_id || 'unassigned'}
+                  onValueChange={(value) => {
+                    const newAgentId = value === 'unassigned' ? null : value;
+                    updateTicketMutation.mutate({ assigned_agent_id: newAgentId });
+                  }}
+                  disabled={
+                    updateTicketMutation.isPending ||
+                    isTicketClosed ||
+                    (user?.role !== 'admin' && isNotAssignedToCurrentUser)
+                  }
+                >
+                  <SelectTrigger className="mt-1 w-full [&>span]:line-clamp-none">
+                    <SelectValue>
+                      {ticket.assigned_agent_id ? (
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-gray-500" />
+                          <span>
+                            {agents.find((agent: any) => agent.id === ticket.assigned_agent_id)?.name || 'Unknown Agent'}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className={cn(
+                          "italic",
+                          (user?.role === 'admin' && !isTicketClosed) ? "text-gray-900" : "text-gray-500"
+                        )}>
+                          Unassigned
+                        </span>
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">
+                      <span className="text-gray-500 italic">Unassigned</span>
+                    </SelectItem>
+                    {agents.map((agent: any) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-gray-500" />
+                          <span>{agent.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Quick Status Updates */}
@@ -1321,8 +1698,8 @@ export default function TicketPage() {
                     variant="outline"
                     size="sm"
                     className="w-full justify-start text-green-700 border-green-200 hover:bg-green-50"
-                    onClick={() => updateTicketMutation.mutate({ status: 'resolved' })}
-                    disabled={updateTicketMutation.isPending}
+                    onClick={() => handleStatusChange('resolved')}
+                    disabled={updateTicketMutation.isPending || isTicketClosed || isNotAssignedToCurrentUser}
                   >
                     <CheckCircle className="h-4 w-4 mr-2" />
                     Mark as Resolved
@@ -1330,26 +1707,165 @@ export default function TicketPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full justify-start text-yellow-700 border-yellow-200 hover:bg-yellow-50"
-                    onClick={() => updateTicketMutation.mutate({ status: 'pending' })}
-                    disabled={updateTicketMutation.isPending}
-                  >
-                    <Clock className="h-4 w-4 mr-2" />
-                    Mark as Pending
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
                     className="w-full justify-start text-gray-700 border-gray-200 hover:bg-gray-50"
-                    onClick={() => updateTicketMutation.mutate({ status: 'closed' })}
-                    disabled={updateTicketMutation.isPending}
+                    onClick={() => handleStatusChange('closed')}
+                    disabled={updateTicketMutation.isPending || isTicketClosed || isNotAssignedToCurrentUser}
                   >
                     <XCircle className="h-4 w-4 mr-2" />
                     Close Ticket
                   </Button>
                 </div>
               </div>
-            </div>
+
+              {/* Internal Notes */}
+              <div className="pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-gray-700">Internal Notes</h4>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowAddNoteDialog(true)}
+                    className="h-7 text-xs"
+                  >
+                    + Add Note
+                  </Button>
+                </div>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                  {ticket?.comments
+                    ?.filter((comment: TicketComment) => comment.is_internal_note && !comment.content?.startsWith('FORWARD_MESSAGE:'))
+                    .length === 0 ? (
+                    <p className="text-xs text-gray-500 italic">No internal notes yet</p>
+                  ) : (
+                    ticket?.comments
+                      ?.filter((comment: TicketComment) => comment.is_internal_note && !comment.content?.startsWith('FORWARD_MESSAGE:'))
+                      .sort((a: TicketComment, b: TicketComment) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                      .map((note: TicketComment) => {
+                        const isHidden = hiddenNoteIds.includes(note.id);
+                        const isEditing = editingNoteId === note.id;
+
+                        return (
+                          <div
+                            key={note.id}
+                            className="bg-amber-50 border border-amber-200 rounded-lg text-sm overflow-hidden"
+                          >
+                            {/* Header - Always visible */}
+                            <div className="flex items-center justify-between gap-2 p-2 bg-amber-100/50">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <User className="h-3 w-3 text-amber-700 flex-shrink-0" />
+                                <span className="font-medium text-amber-900 text-xs truncate">
+                                  {note.user?.name || 'Unknown User'}
+                                </span>
+                                <span className="text-xs text-amber-600">
+                                  {format(new Date(note.created_at), 'MMM d, h:mm a')}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 text-amber-700 hover:text-amber-900 hover:bg-amber-200"
+                                  onClick={() => setHiddenNoteIds(prev =>
+                                    isHidden ? prev.filter(id => id !== note.id) : [...prev, note.id]
+                                  )}
+                                >
+                                  {isHidden ? (
+                                    <ChevronDown className="h-3 w-3" />
+                                  ) : (
+                                    <ChevronUp className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Content - Collapsible */}
+                            {!isHidden && (
+                              <div className="p-3">
+                                {isEditing ? (
+                                  <div className="space-y-2">
+                                    <textarea
+                                      value={editingNoteContent}
+                                      onChange={(e) => setEditingNoteContent(e.target.value)}
+                                      className="w-full min-h-[80px] px-2 py-1.5 text-xs border border-amber-300 rounded focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        className="h-6 text-xs bg-amber-600 hover:bg-amber-700"
+                                        onClick={async () => {
+                                          try {
+                                            await api.messages.update(note.id, {
+                                              content: editingNoteContent,
+                                              is_internal_note: true
+                                            });
+                                            queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+                                            setEditingNoteId(null);
+                                            setEditingNoteContent('');
+                                            toast.success('Note updated');
+                                          } catch (error) {
+                                            console.error('Failed to update note:', error);
+                                            toast.error('Failed to update note');
+                                          }
+                                        }}
+                                      >
+                                        Save
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 text-xs"
+                                        onClick={() => {
+                                          setEditingNoteId(null);
+                                          setEditingNoteContent('');
+                                        }}
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p className="text-amber-900 whitespace-pre-wrap text-xs leading-relaxed mb-2">
+                                      {note.content}
+                                    </p>
+                                    {/* Only show edit/delete buttons if current user is the author */}
+                                    {note.user_id === user?.id && (
+                                      <div className="flex items-center gap-1 pt-2 border-t border-amber-200">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs text-amber-700 hover:text-amber-900 hover:bg-amber-100"
+                                          onClick={() => {
+                                            setEditingNoteId(note.id);
+                                            setEditingNoteContent(note.content);
+                                          }}
+                                        >
+                                          <Edit3 className="h-3 w-3 mr-1" />
+                                          Edit
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 px-2 text-xs text-red-700 hover:text-red-900 hover:bg-red-100"
+                                          onClick={() => setDeleteNoteId(note.id)}
+                                        >
+                                          <XCircle className="h-3 w-3 mr-1" />
+                                          Delete
+                                        </Button>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -1551,6 +2067,165 @@ export default function TicketPage() {
               >
                 <Forward className="h-4 w-4 mr-2" />
                 Forward Ticket
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Note Confirmation Dialog */}
+        <Dialog open={!!deleteNoteId} onOpenChange={(open) => !open && setDeleteNoteId(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Internal Note</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this internal note? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-red-800">
+                  This will permanently delete the internal note and it will no longer be visible to any team members.
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteNoteId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  try {
+                    await api.messages.delete(deleteNoteId!);
+                    queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+                    setDeleteNoteId(null);
+                    toast.success('Internal note deleted');
+                  } catch (error) {
+                    console.error('Failed to delete note:', error);
+                    toast.error('Failed to delete note');
+                  }
+                }}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Delete Note
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Close Ticket Confirmation Dialog */}
+        <Dialog open={isCloseConfirmDialogOpen} onOpenChange={setIsCloseConfirmDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Close Ticket</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to close this ticket?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-yellow-800">
+                    Important: This action will make the ticket read-only
+                  </p>
+                  <p className="text-sm text-yellow-700">
+                    Once closed, you will not be able to:
+                  </p>
+                  <ul className="text-sm text-yellow-700 list-disc list-inside space-y-1 ml-2">
+                    <li>Change the status, priority, or assignment</li>
+                    <li>Add new replies or comments</li>
+                    <li>Modify any ticket details</li>
+                  </ul>
+                  <p className="text-xs text-yellow-600 mt-2">
+                    Closed tickets can only be viewed, not edited.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsCloseConfirmDialogOpen(false);
+                  setPendingStatusChange(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmClose}
+                disabled={updateTicketMutation.isPending}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Yes, Close Ticket
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Internal Note Dialog */}
+        <Dialog open={showAddNoteDialog} onOpenChange={setShowAddNoteDialog}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Add Internal Note</DialogTitle>
+              <DialogDescription>
+                Create a private note visible to agents assigned to this ticket
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="note-content">Note Content</Label>
+                <textarea
+                  id="note-content"
+                  className="w-full min-h-[120px] px-3 py-2 mt-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter your internal note..."
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => {
+                setShowAddNoteDialog(false);
+                setNoteContent('');
+              }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  try {
+                    // Create internal note via API
+                    await api.tickets.addComment(
+                      ticketId as string,
+                      noteContent,
+                      true, // isInternal
+                      undefined, // clientEmail
+                      undefined // attachments
+                      // No visibleToAgents - visible to assigned agents by default
+                    );
+
+                    // Refresh ticket data to show new note
+                    queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+
+                    // Close dialog and reset
+                    setShowAddNoteDialog(false);
+                    setNoteContent('');
+
+                    toast.success('Internal note added successfully');
+                  } catch (error) {
+                    console.error('Failed to add internal note:', error);
+                    toast.error('Failed to add internal note');
+                  }
+                }}
+                disabled={!noteContent.trim()}
+              >
+                Add Note
               </Button>
             </DialogFooter>
           </DialogContent>

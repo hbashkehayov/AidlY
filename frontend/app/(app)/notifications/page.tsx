@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import api from '@/lib/api';
 import { format } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import Link from 'next/link';
 
 interface Notification {
@@ -51,6 +52,47 @@ const getPriorityColor = (priority: string) => {
       return 'text-gray-500';
     default:
       return 'text-gray-500';
+  }
+};
+
+/**
+ * Sanitize notification text by removing HTML tags and unprocessed template variables
+ */
+const sanitizeNotificationText = (text: string): string => {
+  if (!text) return 'No message';
+
+  // Strip HTML tags
+  let sanitized = text.replace(/<[^>]*>/g, '');
+
+  // Remove unprocessed template variables like {{variable}}, {variable}, {Variable}
+  sanitized = sanitized.replace(/\{\{?[^}]+\}\}?/g, '');
+
+  // Remove extra whitespace and trim
+  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+  // If empty after sanitization, return fallback
+  return sanitized || 'New notification';
+};
+
+/**
+ * Format UTC timestamp to local timezone
+ */
+const formatLocalTime = (utcTimestamp: string): string => {
+  try {
+    // Parse the UTC timestamp
+    const utcDate = new Date(utcTimestamp + 'Z'); // Add 'Z' to ensure it's treated as UTC
+
+    // Get the user's timezone
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Convert to user's local timezone
+    const localDate = toZonedTime(utcDate, userTimezone);
+
+    // Format the date
+    return format(localDate, 'MMM d, yyyy • h:mm a');
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return 'Invalid date';
   }
 };
 
@@ -126,10 +168,6 @@ export default function NotificationsPage() {
       return api.notifications.markMultipleAsRead(unreadIds);
     },
     onSuccess: () => {
-      const count = notifications.filter(n => !n.read_at).length;
-      if (count > 0) {
-        toast.success(`${count} notification${count !== 1 ? 's' : ''} marked as read`);
-      }
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['notification-stats'] });
       queryClient.invalidateQueries({ queryKey: ['notifications-preview'] });
@@ -143,8 +181,6 @@ export default function NotificationsPage() {
       return Promise.all(deletePromises);
     },
     onSuccess: () => {
-      const count = notifications.length;
-      toast.success(`${count} notification${count !== 1 ? 's' : ''} cleared`);
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['notification-stats'] });
       queryClient.invalidateQueries({ queryKey: ['notifications-preview'] });
@@ -326,7 +362,7 @@ export default function NotificationsPage() {
                                   "text-base font-medium",
                                   isUnread && "font-semibold"
                                 )}>
-                                  {notification.title}
+                                  {sanitizeNotificationText(notification.title)}
                                 </h3>
                                 {isUnread && (
                                   <div className="h-2 w-2 bg-blue-500 rounded-full flex-shrink-0" />
@@ -334,12 +370,12 @@ export default function NotificationsPage() {
                               </div>
 
                               <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                {format(new Date(notification.created_at), 'MMM d, yyyy • h:mm a')}
+                                {formatLocalTime(notification.created_at)}
                               </span>
                             </div>
 
                             <p className="text-sm text-muted-foreground mb-3">
-                              {notification.message}
+                              {sanitizeNotificationText(notification.message)}
                             </p>
 
                             <div className="flex items-center justify-between">

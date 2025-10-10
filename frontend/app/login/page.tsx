@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth';
-import { Loader2, Mail, Lock, ArrowRight, Sparkles, Users, Headphones } from 'lucide-react';
+import { Loader2, Mail, Lock, ArrowRight, Sparkles, Users, Headphones, Handshake } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function LoginPage() {
@@ -100,7 +100,7 @@ export default function LoginPage() {
 
               <div className="flex items-start gap-4 group">
                 <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
-                  <Headphones className="h-5 w-5" />
+                  <Handshake className="h-5 w-5" />
                 </div>
                 <div>
                   <h3 className="font-semibold text-lg">Customer First</h3>
@@ -200,15 +200,6 @@ export default function LoginPage() {
                 </p>
               </CardFooter>
             </form>
-          </Card>
-
-          {/* Demo credentials hint */}
-          <Card className="mt-4 bg-muted/50 border-0">
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground text-center">
-                <span className="font-medium">Demo:</span> admin@aidly.com / password123
-              </p>
-            </CardContent>
           </Card>
         </div>
       </div>

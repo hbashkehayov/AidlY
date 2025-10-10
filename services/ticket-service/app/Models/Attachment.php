@@ -30,7 +30,26 @@ class Attachment extends Model
         'created_at' => 'datetime',
     ];
 
-    protected $appends = ['url', 'filename', 'path'];
+    protected $appends = ['url', 'filename', 'path', 'size'];
+
+    protected $visible = [
+        'id',
+        'ticket_id',
+        'comment_id',
+        'uploaded_by_user_id',
+        'uploaded_by_client_id',
+        'file_name',
+        'file_type',
+        'file_size',
+        'storage_path',
+        'mime_type',
+        'is_inline',
+        'created_at',
+        'url',
+        'filename',
+        'path',
+        'size',
+    ];
 
     public $timestamps = false;
 
@@ -87,5 +106,13 @@ class Attachment extends Model
     public function getPathAttribute(): ?string
     {
         return $this->attributes['storage_path'] ?? null;
+    }
+
+    /**
+     * Get size attribute (alias for file_size)
+     */
+    public function getSizeAttribute(): ?int
+    {
+        return $this->attributes['file_size'] ?? null;
     }
 }

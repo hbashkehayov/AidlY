@@ -26,18 +26,20 @@ class DashboardController extends Controller
             $last30To60Days = $now->copy()->subDays(60);
 
             // CURRENT STATUS - All time totals for context
-            $totalTickets = DB::connection('pgsql')->table('tickets')->count();
-            $openTickets = DB::connection('pgsql')->table('tickets')->where('status', 'open')->count();
-            $resolvedTickets = DB::connection('pgsql')->table('tickets')->where('status', 'resolved')->count();
-            $pendingTickets = DB::connection('pgsql')->table('tickets')->where('status', 'pending')->count();
+            $totalTickets = DB::connection('pgsql')->table('tickets')->where('is_archived', false)->count();
+            $openTickets = DB::connection('pgsql')->table('tickets')->where('status', 'open')->where('is_archived', false)->count();
+            $resolvedTickets = DB::connection('pgsql')->table('tickets')->where('status', 'resolved')->where('is_archived', false)->count();
+            $pendingTickets = DB::connection('pgsql')->table('tickets')->where('status', 'pending')->where('is_archived', false)->count();
 
             // TODAY'S ACTIVITY
             $newTicketsToday = DB::connection('pgsql')->table('tickets')
                 ->whereDate('created_at', Carbon::today())
+                ->where('is_archived', false)
                 ->count();
             $resolvedToday = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'resolved')
                 ->whereDate('updated_at', Carbon::today())
+                ->where('is_archived', false)
                 ->count();
 
             // Active customers and agents
@@ -56,6 +58,7 @@ class DashboardController extends Controller
                 ->whereNotNull('first_response_at')
                 ->whereNotNull('created_at')
                 ->where('created_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->select('created_at', 'first_response_at')
                 ->get();
 
@@ -82,6 +85,7 @@ class DashboardController extends Controller
                 ->whereNotNull('first_response_at')
                 ->whereNotNull('created_at')
                 ->whereBetween('created_at', [$last60Days, $last30Days])
+                ->where('is_archived', false)
                 ->select('created_at', 'first_response_at')
                 ->get();
 
@@ -114,6 +118,7 @@ class DashboardController extends Controller
                 ->whereNotNull('resolved_at')
                 ->whereNotNull('created_at')
                 ->where('created_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->select('created_at', 'resolved_at')
                 ->get();
 
@@ -138,11 +143,13 @@ class DashboardController extends Controller
             $openTicketsLast30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'open')
                 ->where('created_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->count();
 
             $openTicketsPrevious30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'open')
                 ->whereBetween('created_at', [$last60Days, $last30Days])
+                ->where('is_archived', false)
                 ->count();
 
             $openTicketsChange = $openTicketsPrevious30 > 0
@@ -152,11 +159,13 @@ class DashboardController extends Controller
             $pendingTicketsLast30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'pending')
                 ->where('created_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->count();
 
             $pendingTicketsPrevious30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'pending')
                 ->whereBetween('created_at', [$last60Days, $last30Days])
+                ->where('is_archived', false)
                 ->count();
 
             $pendingTicketsChange = $pendingTicketsPrevious30 > 0
@@ -166,11 +175,13 @@ class DashboardController extends Controller
             $resolvedTicketsLast30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'resolved')
                 ->where('updated_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->count();
 
             $resolvedTicketsPrevious30 = DB::connection('pgsql')->table('tickets')
                 ->where('status', 'resolved')
                 ->whereBetween('updated_at', [$last60Days, $last30Days])
+                ->where('is_archived', false)
                 ->count();
 
             $resolvedTicketsChange = $resolvedTicketsPrevious30 > 0
@@ -180,6 +191,7 @@ class DashboardController extends Controller
             // Priority distribution (last 30 days for actionable data)
             $priorityDistribution = DB::connection('pgsql')->table('tickets')
                 ->where('created_at', '>=', $last30Days)
+                ->where('is_archived', false)
                 ->select('priority', DB::raw('count(*) as count'))
                 ->groupBy('priority')
                 ->get()
@@ -195,6 +207,7 @@ class DashboardController extends Controller
 
             // Status distribution (current)
             $statusDistribution = DB::connection('pgsql')->table('tickets')
+                ->where('is_archived', false)
                 ->select('status', DB::raw('count(*) as count'))
                 ->groupBy('status')
                 ->get()
@@ -281,21 +294,25 @@ class DashboardController extends Controller
                 // Get actual ticket counts for this date
                 $ticketCount = DB::connection('pgsql')->table('tickets')
                     ->whereDate('created_at', $date->format('Y-m-d'))
+                    ->where('is_archived', false)
                     ->count();
 
                 $resolvedCount = DB::connection('pgsql')->table('tickets')
                     ->whereDate('updated_at', $date->format('Y-m-d'))
                     ->where('status', 'resolved')
+                    ->where('is_archived', false)
                     ->count();
 
                 $newCount = DB::connection('pgsql')->table('tickets')
                     ->whereDate('created_at', $date->format('Y-m-d'))
                     ->where('status', 'new')
+                    ->where('is_archived', false)
                     ->count();
 
                 $openCount = DB::connection('pgsql')->table('tickets')
                     ->whereDate('created_at', $date->format('Y-m-d'))
                     ->where('status', 'open')
+                    ->where('is_archived', false)
                     ->count();
 
                 $data[] = [
@@ -358,6 +375,7 @@ class DashboardController extends Controller
                 ->table('tickets')
                 ->join('users', 'tickets.assigned_agent_id', '=', 'users.id')
                 ->where('tickets.created_at', '>=', $startDate)
+                ->where('tickets.is_archived', false)
                 ->whereNotNull('tickets.assigned_agent_id');
 
             if ($agentId) {
@@ -487,6 +505,7 @@ class DashboardController extends Controller
             $tickets = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->where('created_at', '>=', $startDate)
+                ->where('is_archived', false)
                 ->select('id', 'ticket_number', 'subject', 'status', 'priority', 'created_at', 'first_response_at', 'resolved_at')
                 ->get();
 
@@ -599,6 +618,7 @@ class DashboardController extends Controller
             $tickets = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->where('status', 'open')
+                ->where('is_archived', false)
                 ->select('id', 'ticket_number', 'subject', 'status', 'priority', 'source',
                          'client_id', 'created_at', 'first_response_at', 'resolution_due_at',
                          'updated_at', 'tags')
@@ -688,12 +708,14 @@ class DashboardController extends Controller
             $assignedCount = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->where('status', 'open')
+                ->where('is_archived', false)
                 ->count();
 
             // Resolved today
             $resolvedToday = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->whereDate('resolved_at', $today)
+                ->where('is_archived', false)
                 ->count();
 
             // Comments sent today (public replies only)
@@ -709,6 +731,7 @@ class DashboardController extends Controller
                 ->whereNotNull('first_response_at')
                 ->whereNotNull('created_at')
                 ->where('created_at', '>=', $now->copy()->subDays(30))
+                ->where('is_archived', false)
                 ->select('created_at', 'first_response_at')
                 ->get();
 
@@ -849,6 +872,7 @@ class DashboardController extends Controller
             $dailyResolved = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->whereBetween('resolved_at', [$weekStart, $now])
+                ->where('is_archived', false)
                 ->select(DB::raw('DATE(resolved_at) as date'), DB::raw('COUNT(*) as count'))
                 ->groupBy('date')
                 ->orderBy('date')
@@ -876,6 +900,7 @@ class DashboardController extends Controller
                 $count = DB::connection('pgsql')->table('tickets')
                     ->where('assigned_agent_id', $agentId)
                     ->whereDate('resolved_at', $dateStr)
+                    ->where('is_archived', false)
                     ->count();
 
                 if ($count >= 1) {
@@ -926,6 +951,7 @@ class DashboardController extends Controller
             $assignedTickets = DB::connection('pgsql')->table('tickets')
                 ->where('assigned_agent_id', $agentId)
                 ->whereIn('status', ['open', 'pending', 'new'])
+                ->where('is_archived', false)
                 ->pluck('id')
                 ->toArray();
 

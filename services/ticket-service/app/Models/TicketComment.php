@@ -23,9 +23,7 @@ class TicketComment extends Model
         'is_ai_generated',
         'ai_suggestion_used',
         'attachments',
-        'is_read',
-        'read_at',
-        'read_by',
+        'visible_to_agents',
         // Email metadata for Gmail-style rendering
         'from_address',
         'to_addresses',
@@ -41,14 +39,12 @@ class TicketComment extends Model
         'ticket_id' => 'string',
         'user_id' => 'string',
         'client_id' => 'string',
-        'read_by' => 'string',
         'is_internal_note' => 'boolean',
         'is_ai_generated' => 'boolean',
-        'is_read' => 'boolean',
-        'read_at' => 'datetime',
         // Keep in casts for proper JSON encoding when saving
         // Accessor will override this when reading if relationship is loaded
         'attachments' => 'array',
+        'visible_to_agents' => 'array',
         // Email metadata casts
         'to_addresses' => 'array',
         'cc_addresses' => 'array',
@@ -118,7 +114,10 @@ class TicketComment extends Model
         // If commentAttachments relationship is loaded, use it (new approach)
         // This returns proper Attachment model instances with all fields
         if ($this->relationLoaded('commentAttachments')) {
-            return $this->commentAttachments;
+            // Convert Collection to array to ensure proper JSON serialization with all fields
+            return $this->commentAttachments->map(function($attachment) {
+                return $attachment->toArray();
+            })->toArray();
         }
 
         // Otherwise return the casted value from database (Laravel already decoded JSON → array)
@@ -148,16 +147,6 @@ class TicketComment extends Model
         return $query->whereNotNull('client_id');
     }
 
-    public function scopeUnread($query)
-    {
-        return $query->where('is_read', false);
-    }
-
-    public function scopeRead($query)
-    {
-        return $query->where('is_read', true);
-    }
-
     /**
      * Helper methods
      */
@@ -179,5 +168,39 @@ class TicketComment extends Model
     public function getAttachmentCount(): int
     {
         return $this->attachments ? count($this->attachments) : 0;
+    }
+
+    /**
+     * Check if a user can view this internal note
+     */
+    public function canBeViewedBy(?string $userId): bool
+    {
+        // If not an internal note, everyone can see it
+        if (!$this->is_internal_note) {
+            return true;
+        }
+
+        // If no user ID provided, cannot view internal notes
+        if (!$userId) {
+            return false;
+        }
+
+        // Creator can always see their own notes
+        if ($this->user_id === $userId) {
+            return true;
+        }
+
+        // If no visibility restrictions, only creator can see
+        if (!$this->visible_to_agents || empty($this->visible_to_agents)) {
+            return false;
+        }
+
+        // Check if visible to all agents
+        if (in_array('all', $this->visible_to_agents)) {
+            return true;
+        }
+
+        // Check if user is in the visible_to_agents list
+        return in_array($userId, $this->visible_to_agents);
     }
 }

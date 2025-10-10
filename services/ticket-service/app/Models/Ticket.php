@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
+use Illuminate\Support\Carbon;
 
 class Ticket extends Model
 {
@@ -17,6 +18,7 @@ class Ticket extends Model
     protected $fillable = [
         'subject',
         'description',
+        'description_html',
         'status',
         'priority',
         'source',
@@ -30,6 +32,7 @@ class Ticket extends Model
         'tags',
         'custom_fields',
         'is_spam',
+        'is_archived',
         // AI Enhancement Fields
         'detected_language',
         'language_confidence_score',
@@ -56,6 +59,7 @@ class Ticket extends Model
         'ai_suggested_category_id' => 'string',
         'first_response_at' => 'datetime',
         'first_response_due_at' => 'datetime',
+        'first_viewed_at' => 'datetime',
         'resolution_due_at' => 'datetime',
         'resolved_at' => 'datetime',
         'closed_at' => 'datetime',
@@ -72,6 +76,7 @@ class Ticket extends Model
         'ai_processing_metadata' => 'array',
         'is_spam' => 'boolean',
         'is_deleted' => 'boolean',
+        'is_archived' => 'boolean',
         'ai_categorization_enabled' => 'boolean',
         'ai_suggestions_enabled' => 'boolean',
         'ai_sentiment_analysis_enabled' => 'boolean',
@@ -123,6 +128,37 @@ class Ticket extends Model
             // Generate ticket number if not provided
             if (!$ticket->ticket_number) {
                 $ticket->ticket_number = static::generateTicketNumber();
+            }
+        });
+
+        // Set timestamps when status changes
+        static::updating(function ($ticket) {
+            // Check if status is being changed
+            if ($ticket->isDirty('status')) {
+                $newStatus = $ticket->status;
+
+                // Set resolved_at when ticket becomes resolved
+                if ($newStatus === self::STATUS_RESOLVED && !$ticket->resolved_at) {
+                    $ticket->resolved_at = Carbon::now();
+                }
+
+                // Set closed_at when ticket becomes closed
+                if ($newStatus === self::STATUS_CLOSED && !$ticket->closed_at) {
+                    $ticket->closed_at = Carbon::now();
+                }
+
+                // Clear resolved_at if status is changed away from resolved (reopened)
+                if ($ticket->getOriginal('status') === self::STATUS_RESOLVED &&
+                    $newStatus !== self::STATUS_RESOLVED &&
+                    $newStatus !== self::STATUS_CLOSED) {
+                    $ticket->resolved_at = null;
+                }
+
+                // Clear closed_at if ticket is reopened from closed
+                if ($ticket->getOriginal('status') === self::STATUS_CLOSED &&
+                    $newStatus !== self::STATUS_CLOSED) {
+                    $ticket->closed_at = null;
+                }
             }
         });
 
@@ -229,7 +265,8 @@ class Ticket extends Model
      */
     public function scopeActive($query)
     {
-        return $query->where('is_deleted', false);
+        return $query->where('is_deleted', false)
+                     ->where('is_archived', false);
     }
 
     public function scopeByStatus($query, $status)
@@ -255,8 +292,8 @@ class Ticket extends Model
     public function scopeOverdue($query)
     {
         return $query->where(function ($q) {
-            $q->where('first_response_due_at', '<', now())
-              ->orWhere('resolution_due_at', '<', now());
+            $q->where('first_response_due_at', '<', Carbon::now())
+              ->orWhere('resolution_due_at', '<', Carbon::now());
         });
     }
 
@@ -284,7 +321,7 @@ class Ticket extends Model
 
     public function isOverdue(): bool
     {
-        $now = now();
+        $now = Carbon::now();
         return ($this->first_response_due_at && $this->first_response_due_at < $now) ||
                ($this->resolution_due_at && $this->resolution_due_at < $now);
     }
@@ -333,7 +370,7 @@ class Ticket extends Model
     {
         if ($this->isOpen()) {
             $this->status = self::STATUS_RESOLVED;
-            $this->resolved_at = now();
+            $this->resolved_at = Carbon::now();
             return $this->save();
         }
         return false;
@@ -343,7 +380,7 @@ class Ticket extends Model
     {
         if ($this->status === self::STATUS_RESOLVED) {
             $this->status = self::STATUS_CLOSED;
-            $this->closed_at = now();
+            $this->closed_at = Carbon::now();
             return $this->save();
         }
         return false;
@@ -412,7 +449,7 @@ class Ticket extends Model
     public function updateAIResults(array $aiData): bool
     {
         $this->fill($aiData);
-        $this->ai_last_processed_at = now();
+        $this->ai_last_processed_at = Carbon::now();
         $this->ai_processing_status = 'completed';
         return $this->save();
     }

@@ -61,6 +61,12 @@ const cleanReplyContent = (content: string): string => {
   return cleaned;
 };
 
+// Helper function to truncate text to 25 characters with ellipsis
+const truncateReply = (content: string, maxLength: number = 25): string => {
+  if (!content || content.length <= maxLength) return content;
+  return content.substring(0, maxLength) + '...';
+};
+
 export default function AgentDashboardPage() {
   // Fetch agent queue
   const { data: queueData, isLoading: queueLoading, error: queueError } = useQuery({
@@ -282,8 +288,8 @@ export default function AgentDashboardPage() {
                               <span className="text-muted-foreground">•</span>
                               <span className="text-muted-foreground">{reply.client_email}</span>
                             </div>
-                            <p className="text-sm leading-relaxed line-clamp-2 bg-muted/50 p-2 rounded">
-                              {cleanReplyContent(reply.content_preview)}
+                            <p className="text-sm leading-relaxed bg-muted/50 p-2 rounded">
+                              {truncateReply(cleanReplyContent(reply.content_preview))}
                             </p>
                           </div>
                         </div>

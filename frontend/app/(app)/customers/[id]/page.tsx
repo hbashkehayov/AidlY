@@ -16,8 +16,6 @@ import {
   Ticket,
   Star,
   Ban,
-  Edit,
-  MoreVertical,
   MessageSquare,
   Clock,
   CheckCircle,
@@ -39,14 +37,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 const statusConfig = {
@@ -165,48 +155,6 @@ export default function CustomerProfilePage() {
             </p>
           </div>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              <MoreVertical className="h-4 w-4 mr-2" />
-              Actions
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            <DropdownMenuItem>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Customer
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Mail className="h-4 w-4 mr-2" />
-              Send Email
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {customer.is_vip ? (
-              <DropdownMenuItem>
-                <Star className="h-4 w-4 mr-2" />
-                Remove VIP Status
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem>
-                <Star className="h-4 w-4 mr-2" />
-                Mark as VIP
-              </DropdownMenuItem>
-            )}
-            {customer.is_blocked ? (
-              <DropdownMenuItem>
-                <Ban className="h-4 w-4 mr-2" />
-                Unblock Customer
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem className="text-red-600">
-                <Ban className="h-4 w-4 mr-2" />
-                Block Customer
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       {/* Profile Overview */}
@@ -360,7 +308,7 @@ export default function CustomerProfilePage() {
                       >
                         <TableCell>
                           <div>
-                            <p className="font-medium">{ticket.subject}</p>
+                            <p className="font-medium">{ticket.subject || '(No Subject)'}</p>
                             <p className="text-sm text-muted-foreground">#{ticket.ticket_number}</p>
                           </div>
                         </TableCell>

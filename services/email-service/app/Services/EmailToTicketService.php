@@ -13,12 +13,14 @@ class EmailToTicketService
     protected $ticketServiceUrl;
     protected $clientServiceUrl;
     protected $apiKey;
+    protected $contentFormatter;
 
     public function __construct()
     {
         $this->ticketServiceUrl = env('TICKET_SERVICE_URL', 'http://localhost:8002');
         $this->clientServiceUrl = env('CLIENT_SERVICE_URL', 'http://localhost:8003');
         $this->apiKey = env('TICKET_SERVICE_API_KEY', '');
+        $this->contentFormatter = new EmailContentFormatter();
     }
 
     /**
@@ -345,7 +347,7 @@ class EmailToTicketService
             throw new \Exception("Email sender is blocked: " . $email->from_address);
         }
 
-        // Enhanced description extraction with multiple fallbacks (same as comment logic)
+        // Enhanced description extraction with improved formatting
         \Log::info('Email body extraction for new ticket', [
             'email_id' => $email->id,
             'body_html_length' => strlen($email->body_html ?? ''),
@@ -354,18 +356,17 @@ class EmailToTicketService
             'has_attachments' => $email->hasAttachments(),
         ]);
 
-        $description = null;
+        // Use the new formatter to get properly formatted content
+        $formatted = $this->contentFormatter->formatEmailContent(
+            $email->body_html,
+            $email->body_plain,
+            true // Prefer HTML for rich formatting
+        );
 
-        if (!empty($email->body_html)) {
-            $description = $this->cleanEmailContent($email->body_html, true);
-        } elseif (!empty($email->body_plain)) {
-            $description = $this->cleanEmailContent($email->body_plain, false);
-        } elseif (!empty($email->content)) {
-            $description = $this->cleanEmailContent($email->content, false);
-        }
+        $description = $formatted['display'];
 
-        // Final fallbacks if all sources are empty
-        if (empty($description)) {
+        // Ensure we have some content
+        if (empty($description) || $description === '[No readable content available]') {
             if ($email->hasAttachments()) {
                 $attachmentCount = is_array($email->attachments) ? count($email->attachments) : 0;
                 $description = "[Email received with {$attachmentCount} attachment(s)]";
@@ -385,10 +386,21 @@ class EmailToTicketService
             }
         }
 
+        \Log::info('Formatted email content for ticket', [
+            'email_id' => $email->id,
+            'description_length' => strlen($description),
+            'has_html' => !empty($formatted['html']),
+            'has_plain' => !empty($formatted['plain']),
+        ]);
+
+        // Handle empty subject - provide fallback
+        $subject = !empty(trim($email->subject)) ? trim($email->subject) : '(No Subject)';
+
         // Prepare ticket data
         $ticketData = [
-            'subject' => $email->subject,
+            'subject' => $subject,
             'description' => $description,
+            'description_html' => $email->body_html, // Send HTML with embedded inline images
             'client_id' => $clientId,
             'client_email' => $email->from_address, // Pass email for ticket service to handle client creation
             'source' => 'email',
@@ -466,6 +478,27 @@ class EmailToTicketService
      */
     protected function addCommentToTicket(string $ticketId, EmailQueue $email): array
     {
+        // CHECK: Fetch ticket details to verify status
+        $ticket = $this->getTicketDetails($ticketId);
+
+        // REJECT: If ticket is closed, don't process the reply
+        if ($ticket && isset($ticket['status']) && $ticket['status'] === 'closed') {
+            // Mark email as processed without creating comment
+            $email->markAsProcessed($ticketId);
+
+            Log::info("Rejected reply to closed ticket", [
+                'ticket_id' => $ticketId,
+                'ticket_number' => $ticket['ticket_number'] ?? 'Unknown',
+                'ticket_status' => $ticket['status'],
+                'from_address' => $email->from_address,
+                'subject' => $email->subject,
+                'email_id' => $email->id,
+                'message_id' => $email->message_id,
+            ]);
+
+            throw new \Exception("Ticket is closed - Reply rejected for ticket: " . ($ticket['ticket_number'] ?? $ticketId));
+        }
+
         // CHECK: If client is blocked, send notification and reject comment creation
         $client = $this->findClient($email->from_address);
         if ($client && isset($client['is_blocked']) && $client['is_blocked'] === true) {
@@ -508,7 +541,7 @@ class EmailToTicketService
             throw new \Exception("Email sender is blocked - Reply rejected: " . $email->from_address);
         }
 
-        // Enhanced content extraction with multiple fallbacks
+        // Enhanced content extraction with improved formatting
         \Log::info('Email body extraction for ticket comment', [
             'email_id' => $email->id,
             'body_html_length' => strlen($email->body_html ?? ''),
@@ -517,23 +550,17 @@ class EmailToTicketService
             'has_attachments' => $email->hasAttachments(),
         ]);
 
-        // Try multiple sources in order of preference:
-        // 1. HTML body (best for formatting)
-        // 2. Plain text body
-        // 3. Processed content field
-        // 4. Fallback messages
-        $content = null;
+        // Use the new formatter to get properly formatted content
+        $formatted = $this->contentFormatter->formatEmailContent(
+            $email->body_html,
+            $email->body_plain,
+            true // Prefer HTML for rich formatting
+        );
 
-        if (!empty($email->body_html)) {
-            $content = $this->cleanEmailContent($email->body_html, true);
-        } elseif (!empty($email->body_plain)) {
-            $content = $this->cleanEmailContent($email->body_plain, false);
-        } elseif (!empty($email->content)) {
-            $content = $this->cleanEmailContent($email->content, false);
-        }
+        $content = $formatted['display'];
 
-        // Final fallbacks if all sources are empty
-        if (empty($content)) {
+        // Ensure we have some content
+        if (empty($content) || $content === '[No readable content available]') {
             if ($email->hasAttachments()) {
                 $attachmentCount = is_array($email->attachments) ? count($email->attachments) : 0;
                 $content = "[Email received with {$attachmentCount} attachment(s)]";
@@ -551,10 +578,25 @@ class EmailToTicketService
             }
         }
 
-        \Log::info('Final comment content prepared', [
+        \Log::info('Formatted email content for comment', [
             'email_id' => $email->id,
             'content_length' => strlen($content),
-            'preview' => substr(strip_tags($content), 0, 100),
+            'preview' => $this->contentFormatter->extractPreview($email->body_html, $email->body_plain, 100),
+            'has_html' => !empty($formatted['html']),
+            'has_plain' => !empty($formatted['plain']),
+        ]);
+
+        // Handle empty subject - provide fallback
+        $subject = !empty(trim($email->subject)) ? trim($email->subject) : '(No Subject)';
+
+        \Log::info('Creating comment with email data', [
+            'email_id' => $email->id,
+            'has_body_html' => !empty($email->body_html),
+            'body_html_length' => strlen($email->body_html ?? ''),
+            'body_html_preview' => substr($email->body_html ?? '', 0, 300),
+            'contains_data_uri' => strpos($email->body_html ?? '', 'data:image') !== false,
+            'contains_cid' => strpos($email->body_html ?? '', 'cid:') !== false,
+            'contains_image_text' => strpos($email->body_html ?? '', '[image:') !== false,
         ]);
 
         $commentData = [
@@ -564,7 +606,7 @@ class EmailToTicketService
             'from_address' => $email->from_address,
             'to_addresses' => $email->to_addresses,
             'cc_addresses' => $email->cc_addresses,
-            'subject' => $email->subject,
+            'subject' => $subject,
             'body_html' => $email->body_html,
             'body_plain' => $email->body_plain,
             'headers' => $email->headers,
@@ -1038,94 +1080,37 @@ TEXT;
     }
 
     /**
-     * Clean email content for customer support display
-     * Removes signatures, quoted replies, disclaimers, and email artifacts
-     *
-     * @param string $content The email content
-     * @param bool $isHtml Whether the content is HTML
-     * @return string Cleaned content
+     * Get ticket details from ticket service
      */
-    protected function cleanEmailContent(string $content, bool $isHtml = false): string
+    protected function getTicketDetails(string $ticketId): ?array
     {
-        if (empty($content)) {
-            return '';
+        try {
+            $headers = [];
+            if ($this->apiKey) {
+                $headers['Authorization'] = 'Bearer ' . $this->apiKey;
+            }
+
+            $response = Http::withHeaders($headers)->get("{$this->ticketServiceUrl}/api/v1/public/tickets/{$ticketId}");
+
+            if ($response->successful() && $response->json('success')) {
+                return $response->json('data');
+            }
+
+            Log::warning("Failed to fetch ticket details", [
+                'ticket_id' => $ticketId,
+                'status_code' => $response->status(),
+                'response' => $response->body(),
+            ]);
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error("Error fetching ticket details", [
+                'ticket_id' => $ticketId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
         }
-
-        // If HTML, convert to plain text first
-        if ($isHtml) {
-            // Remove style and script tags with their content
-            $content = preg_replace('/<style\b[^>]*>.*?<\/style>/is', '', $content);
-            $content = preg_replace('/<script\b[^>]*>.*?<\/script>/is', '', $content);
-
-            // Convert <br> and <p> to newlines
-            $content = preg_replace('/<br\s*\/?>/', "\n", $content);
-            $content = preg_replace('/<\/p>/', "\n\n", $content);
-
-            // Strip all HTML tags
-            $content = strip_tags($content);
-
-            // Decode HTML entities
-            $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        }
-
-        // Split into lines for processing
-        $lines = explode("\n", $content);
-        $cleanedLines = [];
-        $signatureFound = false;
-        $quotedReplyFound = false;
-
-        foreach ($lines as $line) {
-            $trimmedLine = trim($line);
-
-            // Stop at common email signatures
-            if (preg_match('/^(--|__)\s*$/', $trimmedLine) ||
-                preg_match('/^(Best regards|Kind regards|Thanks|Regards|Sincerely|Cheers|Best|BR|Thank you),?\s*$/i', $trimmedLine)) {
-                $signatureFound = true;
-                break;
-            }
-
-            // Stop at "On [date] [person] wrote:" patterns
-            if (preg_match('/^On .+ wrote:$/i', $trimmedLine) ||
-                preg_match('/^[0-9]{1,2}\/[0-9]{1,2}\/[0-9]{2,4}.+wrote:$/i', $trimmedLine) ||
-                preg_match('/^\d{4}-\d{2}-\d{2}.+wrote:$/i', $trimmedLine)) {
-                $quotedReplyFound = true;
-                break;
-            }
-
-            // Skip lines starting with > (quoted text)
-            if (preg_match('/^>+/', $trimmedLine)) {
-                $quotedReplyFound = true;
-                continue;
-            }
-
-            // Skip common email disclaimers
-            if (preg_match('/^(CONFIDENTIAL|DISCLAIMER|This email|The information contained)/i', $trimmedLine)) {
-                break;
-            }
-
-            // Skip "Sent from my iPhone/Android" etc
-            if (preg_match('/^Sent from my (iPhone|iPad|Android|Samsung|Mobile)/i', $trimmedLine)) {
-                break;
-            }
-
-            // Skip empty lines if we haven't found content yet
-            if (empty($cleanedLines) && empty($trimmedLine)) {
-                continue;
-            }
-
-            $cleanedLines[] = $line;
-        }
-
-        // Join lines back together
-        $cleaned = implode("\n", $cleanedLines);
-
-        // Remove excessive whitespace
-        $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned);
-        $cleaned = preg_replace('/[ \t]{2,}/', ' ', $cleaned);
-
-        // Trim
-        $cleaned = trim($cleaned);
-
-        return $cleaned;
     }
+
 }

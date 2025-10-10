@@ -364,7 +364,7 @@ export default function ProfilePage() {
                       >
                         <TableCell>
                           <div>
-                            <p className="font-medium">{ticket.subject}</p>
+                            <p className="font-medium">{ticket.subject || '(No Subject)'}</p>
                             <p className="text-sm text-muted-foreground">#{ticket.ticket_number}</p>
                           </div>
                         </TableCell>
@@ -470,10 +470,6 @@ export default function ProfilePage() {
                 <Button variant="outline" onClick={() => router.push('/settings')}>
                   <Edit className="h-4 w-4 mr-2" />
                   Edit Profile
-                </Button>
-                <Button variant="outline" onClick={() => router.push('/settings?tab=security')}>
-                  <Shield className="h-4 w-4 mr-2" />
-                  Security Settings
                 </Button>
               </div>
             </CardContent>

@@ -200,26 +200,15 @@ class TicketReplyEmailService
     {
         $agentName = $userInfo['name'] ?? 'Support Agent';
         $replyContent = $commentData['content'];
-        $ticketNumber = $ticketData['ticket_number'] ?? 'N/A';
-        $clientName = $clientData['name'] ?? 'Customer';
 
-        // Plain text version
-        $plainContent = "Hello {$clientName},\n\n";
-        $plainContent .= "{$agentName} has replied to your support ticket:\n\n";
-        $plainContent .= "Ticket: {$ticketNumber}\n";
-        $plainContent .= "Subject: {$ticketData['subject']}\n\n";
-        $plainContent .= "Reply:\n" . strip_tags($replyContent) . "\n\n";
-        $plainContent .= "You can view and respond to this ticket at: " . env('APP_URL') . "/tickets/{$ticketData['id']}\n\n";
-        $plainContent .= "Best regards,\n{$agentName}\nSupport Team";
+        // Plain text version - Simple and clean
+        $plainContent = strip_tags($replyContent) . "\n\n";
+        $plainContent .= "Regards,\n{$agentName}";
 
-        // HTML version
+        // HTML version - Simple and clean
         $htmlContent = $this->buildHtmlEmailTemplate([
-            'client_name' => $clientName,
             'agent_name' => $agentName,
-            'ticket_number' => $ticketNumber,
-            'ticket_subject' => $ticketData['subject'],
             'reply_content' => $replyContent,
-            'ticket_url' => env('APP_URL') . "/tickets/{$ticketData['id']}",
         ]);
 
         return [
@@ -280,42 +269,20 @@ class TicketReplyEmailService
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Support Ticket Reply</title>
     <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-        .ticket-info { background: #e9ecef; padding: 10px; border-radius: 3px; margin: 10px 0; }
-        .reply-content { background: #fff; border-left: 4px solid #007bff; padding: 15px; margin: 15px 0; }
-        .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 12px; color: #6c757d; }
-        .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .reply-content { margin: 20px 0; font-size: 14px; line-height: 1.8; }
+        .signature { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #555; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h2>Support Ticket Reply</h2>
-        </div>
-
-        <p>Hello ' . htmlspecialchars($data['client_name']) . ',</p>
-
-        <p>' . htmlspecialchars($data['agent_name']) . ' has replied to your support ticket:</p>
-
-        <div class="ticket-info">
-            <strong>Ticket:</strong> ' . htmlspecialchars($data['ticket_number']) . '<br>
-            <strong>Subject:</strong> ' . htmlspecialchars($data['ticket_subject']) . '
-        </div>
-
         <div class="reply-content">
-            <h4>Reply from ' . htmlspecialchars($data['agent_name']) . ':</h4>
             ' . $data['reply_content'] . '
         </div>
 
-        <p>
-            <a href="' . htmlspecialchars($data['ticket_url']) . '" class="btn">View Ticket</a>
-        </p>
-
-        <div class="footer">
-            <p>Best regards,<br>' . htmlspecialchars($data['agent_name']) . '<br>Support Team</p>
-            <p>You can reply directly to this email to continue the conversation.</p>
+        <div class="signature">
+            <p>Regards,<br>' . htmlspecialchars($data['agent_name']) . '</p>
         </div>
     </div>
 </body>

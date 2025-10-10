@@ -13,8 +13,10 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import api from '@/lib/api';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import Link from 'next/link';
+import { useNotificationSound } from '@/lib/hooks/use-notification-sound';
 
 export interface Notification {
   id: string;
@@ -57,19 +59,65 @@ const getPriorityColor = (priority: string) => {
   }
 };
 
+/**
+ * Sanitize notification text by removing HTML tags and unprocessed template variables
+ */
+const sanitizeNotificationText = (text: string): string => {
+  if (!text) return 'No message';
+
+  // Strip HTML tags
+  let sanitized = text.replace(/<[^>]*>/g, '');
+
+  // Remove unprocessed template variables like {{variable}}, {variable}, {Variable}
+  sanitized = sanitized.replace(/\{\{?[^}]+\}\}?/g, '');
+
+  // Remove extra whitespace and trim
+  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+  // If empty after sanitization, return fallback
+  return sanitized || 'New notification';
+};
+
+/**
+ * Format UTC timestamp to local timezone
+ */
+const formatLocalTime = (utcTimestamp: string): string => {
+  try {
+    // Parse the UTC timestamp
+    const utcDate = new Date(utcTimestamp + 'Z'); // Add 'Z' to ensure it's treated as UTC
+
+    // Get the user's timezone
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Convert to user's local timezone
+    const localDate = toZonedTime(utcDate, userTimezone);
+
+    // Format the date
+    return format(localDate, 'MMM d, yyyy • h:mm a');
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return 'Invalid date';
+  }
+};
+
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch notifications (limit to 10 for preview)
+  // Fetch all notifications for current user (no limit)
   // Everyone sees only their own notifications
   const { data: notificationsData, isLoading } = useQuery({
     queryKey: ['notifications-preview'],
     queryFn: async () => {
-      const response = await api.notifications.list({ limit: 10, unread_only: false });
+      const response = await api.notifications.list({ limit: 10000, unread_only: false });
       return response.data;
     },
-    refetchInterval: 30000, // Refetch every 30 seconds
+    // Real-time updates for notifications
+    refetchInterval: 3000, // Refetch every 3 seconds for real-time updates
+    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: true,
+    refetchOnMount: true,
+    refetchOnReconnect: true,
   });
 
   // Fetch unread count - only for current user
@@ -79,23 +127,90 @@ export function NotificationBell() {
       const response = await api.notifications.stats(false);
       return response.data;
     },
-    refetchInterval: 10000, // Check for new notifications every 10 seconds
+    // Real-time updates for unread count
+    refetchInterval: 3000, // Check for new notifications every 3 seconds
+    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: true,
+    refetchOnMount: true,
+    refetchOnReconnect: true,
   });
 
   const notifications: Notification[] = notificationsData?.data || [];
   const unreadCount = statsData?.data?.unread || 0;
 
-  // Delete notification mutation
+  // Play sound when new notifications arrive
+  useNotificationSound(unreadCount);
+
+  // Delete notification mutation with optimistic updates
   const deleteNotificationMutation = useMutation({
     mutationFn: (notificationId: string) => api.notifications.delete(notificationId),
+    // Optimistic update: Remove from UI immediately
+    onMutate: async (notificationId) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['notifications-preview'] });
+      await queryClient.cancelQueries({ queryKey: ['notification-stats'] });
+
+      // Snapshot previous values
+      const previousNotifications = queryClient.getQueryData(['notifications-preview']);
+      const previousStats = queryClient.getQueryData(['notification-stats']);
+
+      // Optimistically remove the notification
+      queryClient.setQueryData(['notifications-preview'], (old: any) => {
+        if (!old?.data) return old;
+
+        const deletedNotification = old.data.find((n: Notification) => n.id === notificationId);
+        const isUnread = deletedNotification && !deletedNotification.read_at;
+
+        return {
+          ...old,
+          data: old.data.filter((n: Notification) => n.id !== notificationId),
+          meta: {
+            ...old.meta,
+            total: (old.meta?.total || 0) - 1,
+            unread: isUnread ? (old.meta?.unread || 0) - 1 : old.meta?.unread
+          }
+        };
+      });
+
+      // Update stats
+      queryClient.setQueryData(['notification-stats'], (old: any) => {
+        if (!old?.data) return old;
+
+        const previousNotificationsData: any = previousNotifications;
+        const deletedNotification = previousNotificationsData?.data?.find((n: Notification) => n.id === notificationId);
+        const isUnread = deletedNotification && !deletedNotification.read_at;
+
+        return {
+          ...old,
+          data: {
+            ...old.data,
+            total: Math.max(0, (old.data?.total || 0) - 1),
+            unread: isUnread ? Math.max(0, (old.data?.unread || 0) - 1) : old.data?.unread,
+            read: !isUnread ? Math.max(0, (old.data?.read || 0) - 1) : old.data?.read
+          }
+        };
+      });
+
+      return { previousNotifications, previousStats };
+    },
     onSuccess: () => {
       toast.success('Notification deleted');
+    },
+    onError: (_error, _variables, context) => {
+      // Rollback on error
+      if (context?.previousNotifications) {
+        queryClient.setQueryData(['notifications-preview'], context.previousNotifications);
+      }
+      if (context?.previousStats) {
+        queryClient.setQueryData(['notification-stats'], context.previousStats);
+      }
+      toast.error('Failed to delete notification');
+    },
+    // Always refetch to ensure data consistency
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications-preview'] });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['notification-stats'] });
-    },
-    onError: () => {
-      toast.error('Failed to delete notification');
     },
   });
 
@@ -115,22 +230,66 @@ export function NotificationBell() {
     },
   });
 
-  // Clear all notifications mutation
+  // Clear all notifications mutation with optimistic updates
   const clearAllNotificationsMutation = useMutation({
     mutationFn: async () => {
-      // Delete all notifications for the current user
-      const deletePromises = notifications.map(n => api.notifications.delete(n.id));
-      return Promise.all(deletePromises);
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const userId = user?.id;
+
+      if (!userId) {
+        throw new Error('User ID not found');
+      }
+
+      // Fetch ALL notification IDs from backend and delete them
+      const allNotificationsResponse = await api.notifications.list({ limit: 10000, unread_only: false });
+      const allNotifications = allNotificationsResponse.data?.data || [];
+
+      // Delete all notifications
+      const deletePromises = allNotifications.map((n: Notification) => api.notifications.delete(n.id));
+      await Promise.all(deletePromises);
+
+      return allNotifications.length;
     },
-    onSuccess: () => {
-      const count = notifications.length;
-      toast.success(`${count} notification${count !== 1 ? 's' : ''} cleared`);
+    // Optimistic update: Clear UI immediately
+    onMutate: async () => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['notifications-preview'] });
+      await queryClient.cancelQueries({ queryKey: ['notification-stats'] });
+
+      // Snapshot previous values
+      const previousNotifications = queryClient.getQueryData(['notifications-preview']);
+      const previousStats = queryClient.getQueryData(['notification-stats']);
+
+      // Optimistically update to empty state
+      queryClient.setQueryData(['notifications-preview'], (old: any) => ({
+        ...old,
+        data: [],
+        meta: { ...old?.meta, total: 0, unread: 0 }
+      }));
+
+      queryClient.setQueryData(['notification-stats'], (old: any) => ({
+        ...old,
+        data: { ...old?.data, total: 0, unread: 0, read: 0 }
+      }));
+
+      // Return snapshot for rollback
+      return { previousNotifications, previousStats };
+    },
+    onError: (_error, _variables, context) => {
+      // Rollback on error
+      if (context?.previousNotifications) {
+        queryClient.setQueryData(['notifications-preview'], context.previousNotifications);
+      }
+      if (context?.previousStats) {
+        queryClient.setQueryData(['notification-stats'], context.previousStats);
+      }
+      toast.error('Failed to clear notifications');
+    },
+    // Always refetch to ensure data consistency
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications-preview'] });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['notification-stats'] });
-    },
-    onError: () => {
-      toast.error('Failed to clear notifications');
     },
   });
 
@@ -148,14 +307,28 @@ export function NotificationBell() {
     clearAllNotificationsMutation.mutate();
   };
 
-  // Mark all as read when opening the bell
+  // Mark individual notification as read when clicked
+  const handleNotificationClick = async (notificationId: string) => {
+    try {
+      // Mark as read when clicking on the notification
+      await api.notifications.markAsRead(notificationId);
+
+      // Refetch to update UI
+      queryClient.invalidateQueries({ queryKey: ['notifications-preview'] });
+      queryClient.invalidateQueries({ queryKey: ['notification-stats'] });
+
+      // Close dropdown
+      setOpen(false);
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+      // Still close the dropdown and navigate
+      setOpen(false);
+    }
+  };
+
+  // Just toggle open state without marking as read
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
-
-    if (newOpen) {
-      // Mark all as read when bell is clicked
-      handleMarkAllAsRead();
-    }
   };
 
   return (
@@ -165,7 +338,7 @@ export function NotificationBell() {
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center font-semibold">
-              {unreadCount > 99 ? '99+' : unreadCount}
+              {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
         </Button>
@@ -208,7 +381,7 @@ export function NotificationBell() {
                   <Link
                     key={notification.id}
                     href={notification.action_url || `/tickets/${notification.ticket_id}`}
-                    onClick={() => setOpen(false)}
+                    onClick={() => handleNotificationClick(notification.id)}
                     className={cn(
                       "block p-4 hover:bg-accent transition-colors relative",
                       isUnread && "bg-blue-50/50 dark:bg-blue-950/20"
@@ -229,7 +402,7 @@ export function NotificationBell() {
                               "text-sm font-medium",
                               isUnread && "font-semibold"
                             )}>
-                              {notification.title}
+                              {sanitizeNotificationText(notification.title)}
                             </p>
                           </div>
                           {isUnread && (
@@ -238,12 +411,12 @@ export function NotificationBell() {
                         </div>
 
                         <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
-                          {notification.message}
+                          {sanitizeNotificationText(notification.message)}
                         </p>
 
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                            {formatLocalTime(notification.created_at)}
                           </span>
 
                           <div className="flex items-center gap-1">
@@ -270,16 +443,6 @@ export function NotificationBell() {
             </div>
           )}
         </ScrollArea>
-
-        <div className="p-2 border-t bg-muted/30">
-          <Link
-            href="/notifications"
-            className="block w-full text-center text-sm text-primary hover:underline py-2 font-medium"
-            onClick={() => setOpen(false)}
-          >
-            {notifications.length > 0 ? 'View all notifications' : 'View notification center'}
-          </Link>
-        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

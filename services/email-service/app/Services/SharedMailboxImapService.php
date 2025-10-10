@@ -377,14 +377,19 @@ class SharedMailboxImapService
         $bodyHtml = $this->cleanBodyContent($bodyHtml);
         $bodyPlain = $this->cleanBodyContent($bodyPlain);
 
+        // Process attachments with shared mailbox context
+        $attachments = $this->processSharedMailboxAttachments($message, $mailbox);
+
+        // Convert inline images (CID references) to base64 data URIs
+        if ($bodyHtml && !empty($attachments)) {
+            $bodyHtml = $this->embedInlineImages($bodyHtml, $attachments, $message);
+        }
+
         // Prefer plain text, fallback to HTML converted to text
         $content = $bodyPlain;
         if (empty($content) && !empty($bodyHtml)) {
             $content = strip_tags($bodyHtml);
         }
-
-        // Process attachments with shared mailbox context
-        $attachments = $this->processSharedMailboxAttachments($message, $mailbox);
 
         // Extract email headers for threading
         $headers = $this->extractMessageHeaders($message);
@@ -513,13 +518,20 @@ class SharedMailboxImapService
                 $content = $attachment->getContent();
                 $base64Content = base64_encode($content);
 
+                // Get content ID for inline images
+                $contentId = $attachment->getContentId();
+                if ($contentId) {
+                    $contentId = trim($contentId, '<>');
+                }
+
                 $attachments[] = [
                     'filename' => $fileName,
                     'size' => $fileSize,
                     'mime_type' => $attachment->getMimeType(),
                     'extension' => $extension,
                     'content_base64' => $base64Content,
-                    'is_inline' => !empty($attachment->getContentId()),
+                    'is_inline' => !empty($contentId),
+                    'content_id' => $contentId,
                     'processed_by_mailbox' => $mailbox->email_address,
                 ];
 
@@ -865,5 +877,48 @@ class SharedMailboxImapService
         }
 
         return $content;
+    }
+
+    /**
+     * Embed inline images in HTML by converting CID references to base64 data URIs
+     */
+    protected function embedInlineImages(string $html, array $attachments, Message $message): string
+    {
+        // Use the attachments array we already extracted
+        foreach ($attachments as $attachment) {
+            try {
+                $contentId = $attachment['content_id'] ?? null;
+
+                if ($contentId && $attachment['is_inline']) {
+                    // Create data URI from the base64 content we already have
+                    $dataUri = "data:{$attachment['mime_type']};base64,{$attachment['content_base64']}";
+
+                    // Replace CID references with data URI
+                    // Handle various CID formats: cid:xxx, cid:xxx@domain, etc.
+                    $html = preg_replace(
+                        [
+                            '/src=["\']cid:' . preg_quote($contentId, '/') . '["\']/',
+                            '/src=["\']cid:' . preg_quote($contentId, '/') . '@[^"\']*["\']/',
+                        ],
+                        'src="' . $dataUri . '"',
+                        $html
+                    );
+
+                    Log::debug("Embedded inline image in shared mailbox email", [
+                        'content_id' => $contentId,
+                        'mime_type' => $attachment['mime_type'],
+                        'size' => $attachment['size'],
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::error("Failed to embed inline image in shared mailbox email", [
+                    'message_id' => $message->getMessageId(),
+                    'filename' => $attachment['filename'] ?? 'unknown',
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $html;
     }
 }

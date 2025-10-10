@@ -25,7 +25,6 @@ import {
   MessageSquare,
   ChevronLeft,
   ChevronRight,
-  Eye,
   Trash2,
 } from 'lucide-react';
 import api from '@/lib/api';
@@ -88,14 +87,12 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
     : 'U';
 
   const handleRowClick = () => {
-    if (!isAgent) {
-      window.location.href = `/customers/${customer.id}`;
-    }
+    window.location.href = `/customers/${customer.id}`;
   };
 
   return (
     <TableRow
-      className={!isAgent ? "hover:bg-accent/50" : ""}
+      className="hover:bg-accent/50"
     >
       {!isAgent && (
         <TableCell onClick={(e) => e.stopPropagation()}>
@@ -106,7 +103,7 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
         </TableCell>
       )}
       <TableCell
-        className={!isAgent ? "cursor-pointer" : ""}
+        className="cursor-pointer"
         onClick={handleRowClick}
       >
         <div className="flex items-center gap-3">
@@ -126,7 +123,7 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
         </div>
       </TableCell>
       <TableCell
-        className={!isAgent ? "cursor-pointer" : ""}
+        className="cursor-pointer"
         onClick={handleRowClick}
       >
         <div>
@@ -138,29 +135,31 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
           )}
         </div>
       </TableCell>
-      <TableCell
-        className={!isAgent ? "cursor-pointer" : ""}
-        onClick={handleRowClick}
-      >
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {customer.total_tickets || 0}
+      {!isAgent && (
+        <TableCell
+          className="cursor-pointer"
+          onClick={handleRowClick}
+        >
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {customer.total_tickets || 0}
+              </div>
+              <span className="text-sm text-muted-foreground">total</span>
             </div>
-            <span className="text-sm text-muted-foreground">total</span>
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="text-xs font-semibold">
+                {customer.open_tickets || 0} Open
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                {customer.closed_tickets || 0} Closed
+              </Badge>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="default" className="text-xs font-semibold">
-              {customer.open_tickets || 0} Open
-            </Badge>
-            <Badge variant="secondary" className="text-xs">
-              {customer.closed_tickets || 0} Closed
-            </Badge>
-          </div>
-        </div>
-      </TableCell>
+        </TableCell>
+      )}
       <TableCell
-        className={!isAgent ? "cursor-pointer" : ""}
+        className="cursor-pointer"
         onClick={handleRowClick}
       >
         {customer.created_at ? (
@@ -178,20 +177,6 @@ function CustomerRow({ customer, isSelected, onSelectChange, userRole }: any) {
         <TableCell className="text-right">
           <TooltipProvider>
             <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => window.location.href = `/customers/${customer.id}`}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>View Profile</TooltipContent>
-              </Tooltip>
-
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -280,10 +265,8 @@ export default function CustomersPage() {
           params.search = searchQuery;
         }
 
-        // If agent, filter by customers who have tickets assigned to them
-        if (isAgent && user?.id) {
-          params.agent_id = user.id;
-        }
+        // Agents can see all customers (read-only)
+        // No filtering by agent_id
 
         // Fetch from real API
         const response = await api.clients.list(params);
@@ -414,74 +397,76 @@ export default function CustomersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">
-            {isAgent ? 'My Customers' : 'Customers'}
+            Customers
           </h2>
           <p className="text-muted-foreground">
             {isAgent
-              ? 'View customers from your assigned tickets'
+              ? 'View all customer information (read-only)'
               : 'Manage your customer relationships and support history'
             }
           </p>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              {isAgent ? 'My Customers' : 'Total Customers'}
-            </CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-muted-foreground">
-              {isAgent ? `${stats.new_this_month} new this month` : `+${stats.new_this_month} new this month`}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Blocked Customers</CardTitle>
-            <Ban className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.blocked}</div>
-            <p className="text-xs text-muted-foreground">
-              {isAgent ? 'From my customers' : 'Restricted accounts'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Support</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.active}</div>
-            <p className="text-xs text-muted-foreground">
-              {isAgent ? 'My pending tickets' : 'With pending tickets'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              {isAgent ? 'My Tickets' : 'Total Tickets'}
-            </CardTitle>
-            <Ticket className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {customers?.meta?.total_tickets_overall || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {isAgent ? 'Assigned to me' : 'Across all customers'}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Stats Cards - Hidden for agents */}
+      {!isAgent && (
+        <div className="grid gap-4 md:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Customers
+              </CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.total}</div>
+              <p className="text-xs text-muted-foreground">
+                +{stats.new_this_month} new this month
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Blocked Customers</CardTitle>
+              <Ban className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.blocked}</div>
+              <p className="text-xs text-muted-foreground">
+                Restricted accounts
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pending Support</CardTitle>
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.active}</div>
+              <p className="text-xs text-muted-foreground">
+                With pending tickets
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Tickets
+              </CardTitle>
+              <Ticket className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {customers?.meta?.total_tickets_overall || 0}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Across all customers
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Bulk Actions */}
       {!isAgent && showBulkActions && (
@@ -590,7 +575,7 @@ export default function CustomersPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder={isAgent ? "Search my customers..." : "Search by name, email, or company..."}
+                placeholder="Search by name, email, or company..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -617,7 +602,7 @@ export default function CustomersPage() {
                 )}
                 <TableHead>Customer</TableHead>
                 <TableHead>Company</TableHead>
-                <TableHead>Tickets</TableHead>
+                {!isAgent && <TableHead>Tickets</TableHead>}
                 <TableHead>Created At</TableHead>
                 {!isAgent && (
                   <TableHead className="text-right">Actions</TableHead>
@@ -627,7 +612,7 @@ export default function CustomersPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={isAgent ? 4 : 6} className="text-center py-8">
+                  <TableCell colSpan={isAgent ? 3 : 6} className="text-center py-8">
                     <div className="flex justify-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     </div>
@@ -635,7 +620,7 @@ export default function CustomersPage() {
                 </TableRow>
               ) : customers?.data?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAgent ? 4 : 6} className="text-center py-8">
+                  <TableCell colSpan={isAgent ? 3 : 6} className="text-center py-8">
                     No customers found
                   </TableCell>
                 </TableRow>

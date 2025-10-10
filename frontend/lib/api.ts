@@ -1,8 +1,8 @@
 import axios, { AxiosError } from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || 'http://localhost:8001/api/v1/auth';
-const AUTH_SERVICE_URL = 'http://localhost:8001/api/v1'; // Base URL for auth service (not just /auth)
+const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || 'http://localhost:8001/api/v1';
+const AUTH_SERVICE_URL = process.env.NEXT_PUBLIC_AUTH_SERVICE_URL || 'http://localhost:8001/api/v1'; // Base URL for auth service (not just /auth)
 const TICKET_API_URL = process.env.NEXT_PUBLIC_TICKET_API_URL || 'http://localhost:8002/api/v1';
 const CLIENT_API_URL = process.env.NEXT_PUBLIC_CLIENT_API_URL || 'http://localhost:8003/api/v1';
 const ANALYTICS_API_URL = process.env.NEXT_PUBLIC_ANALYTICS_API_URL || 'http://localhost:8007/api/v1';
@@ -98,7 +98,7 @@ const addAuthInterceptor = (instance: any) => {
           // Token expired or invalid - clear and redirect
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
-          window.location.href = '/auth/login';
+          window.location.href = '/login';
         }
       }
       return Promise.reject(error);
@@ -178,7 +178,16 @@ export const api = {
       const endpoint = hasToken ? `/tickets/${id}/assign` : `/public/tickets/${id}/assign`;
       return ticketApi.post(endpoint, { assigned_agent_id: agentId });
     },
-    addComment: async (id: string, content: string, isInternal?: boolean, clientEmail?: string, attachments?: File[]) => {
+    claim: (id: string) => {
+      // Claim endpoint requires authentication
+      return ticketApi.post(`/tickets/${id}/claim`);
+    },
+    markViewed: (id: string) => {
+      const hasToken = !!localStorage.getItem('auth_token');
+      const endpoint = hasToken ? `/tickets/${id}/mark-viewed` : `/public/tickets/${id}/mark-viewed`;
+      return ticketApi.post(endpoint);
+    },
+    addComment: async (id: string, content: string, isInternal?: boolean, clientEmail?: string, attachments?: File[], visibleToAgents?: string[]) => {
       // ALWAYS use public endpoint to avoid authentication issues
       // The backend will handle authentication if present
       const endpoint = `/public/tickets/${id}/comments`;
@@ -217,6 +226,10 @@ export const api = {
           payload.client_email = clientEmail;
         }
 
+        if (visibleToAgents && visibleToAgents.length > 0) {
+          payload.visible_to_agents = visibleToAgents;
+        }
+
         return ticketApi.post(endpoint, payload);
       }
 
@@ -229,6 +242,11 @@ export const api = {
       // Include client email if provided
       if (clientEmail) {
         payload.client_email = clientEmail;
+      }
+
+      // Include visible_to_agents if provided
+      if (visibleToAgents && visibleToAgents.length > 0) {
+        payload.visible_to_agents = visibleToAgents;
       }
 
       return ticketApi.post(endpoint, payload);

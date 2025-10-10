@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { ArrowLeft, Save, Loader2, Key } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ export default function EditTeamMemberPage() {
   const router = useRouter();
   const params = useParams();
   const userId = params.id as string;
+  const queryClient = useQueryClient();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -44,18 +45,80 @@ export default function EditTeamMemberPage() {
   });
 
 
-  // Update mutation
+  // Update mutation with optimistic updates
   const updateMutation = useMutation({
     mutationFn: async (data: any) => {
       const response = await api.users.update(userId, data);
       return response.data;
     },
+    // Optimistically update the cache before the mutation runs
+    onMutate: async (newUserData) => {
+      // Cancel any outgoing refetches to prevent them from overwriting our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['users'] });
+      await queryClient.cancelQueries({ queryKey: ['user', userId] });
+
+      // Snapshot the previous values for rollback
+      const previousUsers = queryClient.getQueriesData({ queryKey: ['users'] });
+      const previousUser = queryClient.getQueryData(['user', userId]);
+
+      // Optimistically update all user list queries
+      queryClient.setQueriesData<any>(
+        { queryKey: ['users'] },
+        (old: any) => {
+          if (!old) return old;
+
+          // Handle both array and object with data property
+          const users = old.data || old;
+          if (!Array.isArray(users)) return old;
+
+          // Update the user in the list
+          const updatedUsers = users.map((user: any) =>
+            user.id === userId
+              ? { ...user, ...newUserData, updated_at: new Date().toISOString() }
+              : user
+          );
+
+          // Preserve the original structure
+          return old.data ? { ...old, data: updatedUsers } : updatedUsers;
+        }
+      );
+
+      // Optimistically update the single user query
+      queryClient.setQueryData(['user', userId], (old: any) => {
+        if (!old) return old;
+        const user = old.data || old;
+        const updatedUser = { ...user, ...newUserData, updated_at: new Date().toISOString() };
+        return old.data ? { ...old, data: updatedUser } : updatedUser;
+      });
+
+      // Return context with previous values for rollback
+      return { previousUsers, previousUser };
+    },
+    // On error, rollback to the previous values
+    onError: (error: any, _newUserData, context) => {
+      toast.error(error.response?.data?.message || 'Failed to update team member');
+
+      // Rollback to previous values
+      if (context?.previousUsers) {
+        context.previousUsers.forEach(([queryKey, data]: [any, any]) => {
+          queryClient.setQueryData(queryKey, data);
+        });
+      }
+      if (context?.previousUser) {
+        queryClient.setQueryData(['user', userId], context.previousUser);
+      }
+    },
+    // On success, invalidate queries to ensure fresh data
     onSuccess: () => {
       toast.success('Team member updated successfully');
+
+      // Invalidate all user queries to refetch fresh data
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['user', userId] });
+      queryClient.invalidateQueries({ queryKey: ['user-ticket-stats'] });
+
+      // Navigate back to team page
       router.push('/team');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to update team member');
     },
   });
 
@@ -148,7 +211,7 @@ export default function EditTeamMemberPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => router.push('/team')}
+          onClick={() => router.back()}
           className="gap-2"
         >
           <ArrowLeft className="h-4 w-4" />

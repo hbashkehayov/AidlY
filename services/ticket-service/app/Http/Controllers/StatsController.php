@@ -9,6 +9,30 @@ use Illuminate\Support\Carbon;
 class StatsController extends Controller
 {
     /**
+     * Safely get the authenticated user ID
+     */
+    protected function getUserId(): ?string
+    {
+        try {
+            // Try to get from request attributes (set by JwtMiddleware)
+            $authUser = request()->attributes->get('auth_user');
+            if ($authUser && isset($authUser['id'])) {
+                return $authUser['id'];
+            }
+
+            // Fallback to request->user if available
+            $user = request()->input('user');
+            if ($user && isset($user['id'])) {
+                return $user['id'];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
      * Get dashboard statistics
      *
      * @return \Illuminate\Http\JsonResponse
@@ -20,6 +44,7 @@ class StatsController extends Controller
             $ticketStats = DB::table('tickets')
                 ->select('status', DB::raw('COUNT(*) as count'))
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->groupBy('status')
                 ->pluck('count', 'status');
 
@@ -27,18 +52,21 @@ class StatsController extends Controller
             $recentActivity = DB::table('tickets')
                 ->where('created_at', '>=', Carbon::now()->subDay())
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->count();
 
             // Resolution statistics
             $resolvedToday = DB::table('tickets')
                 ->where('resolved_at', '>=', Carbon::now()->startOfDay())
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->count();
 
             // Average response time (in hours)
             $avgResponseTime = DB::table('tickets')
                 ->whereNotNull('first_response_at')
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->selectRaw('AVG(EXTRACT(EPOCH FROM (first_response_at - created_at))/3600) as avg_hours')
                 ->first();
 
@@ -51,6 +79,7 @@ class StatsController extends Controller
             $priorityStats = DB::table('tickets')
                 ->select('priority', DB::raw('COUNT(*) as count'))
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->whereIn('status', ['new', 'open', 'pending'])
                 ->groupBy('priority')
                 ->get();
@@ -95,11 +124,13 @@ class StatsController extends Controller
                 $total = DB::table('tickets')
                     ->whereDate('created_at', $date->format('Y-m-d'))
                     ->where('is_deleted', false)
+                    ->where('is_archived', false)
                     ->count();
 
                 $resolved = DB::table('tickets')
                     ->whereDate('resolved_at', $date->format('Y-m-d'))
                     ->where('is_deleted', false)
+                    ->where('is_archived', false)
                     ->count();
 
                 $trends[] = [
@@ -147,6 +178,7 @@ class StatsController extends Controller
                     'users.name as agent_name'
                 ])
                 ->where('tickets.is_deleted', false)
+                ->where('tickets.is_archived', false)
                 ->orderBy('tickets.created_at', 'desc')
                 ->limit(10)
                 ->get();
@@ -189,34 +221,49 @@ class StatsController extends Controller
     public function getNotificationCounts()
     {
         try {
-            // Count new tickets (not yet assigned or opened)
-            $newTickets = DB::table('tickets')
-                ->where('status', 'new')
+            // Get the authenticated user ID from request attributes
+            $userId = $this->getUserId();
+
+            // Count open tickets assigned to the current user
+            $openTickets = DB::table('tickets')
+                ->where('status', 'open')
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
+                ->when($userId, function($query) use ($userId) {
+                    return $query->where('assigned_agent_id', $userId);
+                })
                 ->count();
 
-            // Count unread messages from ticket_comments
+            // Count unread messages from ticket_comments for the current user
             $unreadMessages = DB::table('ticket_comments')
                 ->where('is_read', false)
                 ->count();
 
-            // Overdue tickets (past resolution due date)
+            // Overdue tickets assigned to the current user (past resolution due date)
             $overdueTickets = DB::table('tickets')
                 ->where('resolution_due_at', '<', Carbon::now())
                 ->whereNull('resolved_at')
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
+                ->when($userId, function($query) use ($userId) {
+                    return $query->where('assigned_agent_id', $userId);
+                })
                 ->count();
 
-            // High priority tickets that need attention
+            // High priority tickets assigned to the current user that need attention
             $urgentTickets = DB::table('tickets')
                 ->where('priority', 'urgent')
                 ->whereIn('status', ['new', 'open'])
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
+                ->when($userId, function($query) use ($userId) {
+                    return $query->where('assigned_agent_id', $userId);
+                })
                 ->count();
 
             return response()->json([
                 'success' => true,
-                'new_tickets' => $newTickets,
+                'open_tickets' => $openTickets,
                 'unread_messages' => $unreadMessages,
                 'overdue_tickets' => $overdueTickets,
                 'urgent_tickets' => $urgentTickets,

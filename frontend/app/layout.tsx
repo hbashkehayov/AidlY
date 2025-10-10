@@ -58,7 +58,7 @@ export default function RootLayout({
         <FontSizeInitializer />
         <Providers>
           {children}
-          <Toaster richColors position="top-right" />
+          <Toaster richColors position="top-center" />
         </Providers>
       </body>
     </html>

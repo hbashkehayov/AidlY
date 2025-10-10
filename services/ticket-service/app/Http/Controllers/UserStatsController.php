@@ -72,6 +72,7 @@ class UserStatsController extends Controller
             ])
             ->whereNotNull('assigned_agent_id')
             ->where('is_deleted', false) // Only count active tickets
+            ->where('is_archived', false) // Exclude archived tickets
             ->groupBy('assigned_agent_id')
             ->get();
 
@@ -118,6 +119,7 @@ class UserStatsController extends Controller
                 ])
                 ->where('assigned_agent_id', $userId)
                 ->where('is_deleted', false)
+                ->where('is_archived', false)
                 ->first();
 
             if (!$stats) {

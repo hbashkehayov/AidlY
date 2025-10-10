@@ -22,7 +22,7 @@ class AutoCloseResolvedTickets extends Command
      *
      * @var string
      */
-    protected $description = 'Automatically close tickets that have been resolved or pending for more than 24 hours';
+    protected $description = 'Automatically close tickets that have been resolved for more than 2 days';
 
     /**
      * Execute the console command.
@@ -31,13 +31,13 @@ class AutoCloseResolvedTickets extends Command
      */
     public function handle()
     {
-        $this->info('Starting auto-close process...');
+        $this->info('Starting auto-close process for resolved tickets...');
 
         try {
             DB::beginTransaction();
-            $cutoffTime = Carbon::now()->subHours(24);
+            $cutoffTime = Carbon::now()->subDays(2);
 
-            // 1. Close tickets that are "resolved" for more than 24 hours
+            // Close tickets that are "resolved" for more than 2 days
             $resolvedTickets = Ticket::where('status', Ticket::STATUS_RESOLVED)
                 ->where('resolved_at', '<=', $cutoffTime)
                 ->where('is_deleted', false)
@@ -57,57 +57,20 @@ class AutoCloseResolvedTickets extends Command
                     'new_value' => Ticket::STATUS_CLOSED,
                     'metadata' => [
                         'auto_changed' => true,
-                        'reason' => 'auto_close_resolved_after_24h',
+                        'reason' => 'auto_close_resolved_after_2_days',
                         'resolved_at' => $ticket->resolved_at->toISOString(),
+                        'days_in_resolved' => Carbon::parse($ticket->resolved_at)->diffInDays(Carbon::now()),
                     ]
                 ]);
 
                 $resolvedClosedCount++;
-                $this->info("Closed resolved ticket #{$ticket->ticket_number}");
-            }
-
-            // 2. Close tickets that are "pending" for more than 24 hours
-            $pendingTickets = Ticket::where('status', Ticket::STATUS_PENDING)
-                ->where('updated_at', '<=', $cutoffTime)
-                ->where('is_deleted', false)
-                ->get();
-
-            $pendingClosedCount = 0;
-            foreach ($pendingTickets as $ticket) {
-                // Double-check by looking at ticket history to find when it became pending
-                $lastPendingChange = TicketHistory::where('ticket_id', $ticket->id)
-                    ->where('new_value', Ticket::STATUS_PENDING)
-                    ->orderBy('created_at', 'desc')
-                    ->first();
-
-                // If last pending change was more than 24 hours ago, close it
-                if ($lastPendingChange && $lastPendingChange->created_at <= $cutoffTime) {
-                    $ticket->status = Ticket::STATUS_CLOSED;
-                    $ticket->closed_at = Carbon::now();
-                    $ticket->save();
-
-                    TicketHistory::create([
-                        'ticket_id' => $ticket->id,
-                        'user_id' => null,
-                        'action' => 'status_changed',
-                        'old_value' => Ticket::STATUS_PENDING,
-                        'new_value' => Ticket::STATUS_CLOSED,
-                        'metadata' => [
-                            'auto_changed' => true,
-                            'reason' => 'auto_close_pending_after_24h',
-                            'pending_since' => $lastPendingChange->created_at->toISOString(),
-                        ]
-                    ]);
-
-                    $pendingClosedCount++;
-                    $this->info("Closed pending ticket #{$ticket->ticket_number}");
-                }
+                $this->info("Closed resolved ticket #{$ticket->ticket_number} (resolved " .
+                    Carbon::parse($ticket->resolved_at)->diffForHumans() . ")");
             }
 
             DB::commit();
 
-            $totalClosed = $resolvedClosedCount + $pendingClosedCount;
-            $this->info("Successfully closed {$totalClosed} ticket(s) ({$resolvedClosedCount} resolved, {$pendingClosedCount} pending)");
+            $this->info("Successfully closed {$resolvedClosedCount} resolved ticket(s)");
             return 0;
 
         } catch (\Exception $e) {
